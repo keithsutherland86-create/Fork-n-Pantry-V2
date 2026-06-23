@@ -1,0 +1,131 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+:root {
+  /* Brand greens */
+  --forest:      #1A3028;
+  --pine:        #2D5441;
+  --sage:        #4A7A5E;
+  --mint:        #7AB89A;
+  --mist:        #C8DDD3;
+  --sage-pale:   #EBF3EE;
+  --sage-lt:     #C8DDD3;
+
+  /* Neutrals */
+  --ink:         #0F172A;
+  --charcoal:    #334155;
+  --dust:        #64748B;
+  --silver:      #94A3B8;
+  --whisper:     #F1F5F9;
+  --cream:       #FAFAF9;
+  --parchment:   #F5F0E8;
+  --white:       #FFFFFF;
+  --linen:       #F7F3EE;
+
+  /* Accent */
+  --amber:       #D97706;
+  --amber-lt:    #FEF3C7;
+  --rose:        #E11D48;
+  --rose-lt:     #FFF1F2;
+
+  /* Legacy aliases */
+  --moss:        #2D5441;
+  --bark:        #64748B;
+  --bark-lt:     #C8DDD3;
+  --inset:       inset 0 1px 3px rgba(0,0,0,0.06);
+
+  /* Radii */
+  --r-sm:  8px;
+  --r-md:  14px;
+  --r-lg:  20px;
+  --r-xl:  26px;
+  --r-2xl: 34px;
+
+  /* Shadows */
+  --sh-xs: 0 1px 3px rgba(0,0,0,0.06);
+  --sh-sm: 0 2px 10px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.04);
+  --sh-md: 0 6px 24px rgba(0,0,0,0.09), 0 2px 6px rgba(0,0,0,0.04);
+  --sh-lg: 0 12px 40px rgba(0,0,0,0.11), 0 4px 10px rgba(0,0,0,0.05);
+  --sh-xl: 0 20px 60px rgba(0,0,0,0.14), 0 8px 18px rgba(0,0,0,0.06);
+  --sh-inner: inset 0 1px 4px rgba(0,0,0,0.07);
+
+  /* Typography */
+  --font-ui:   'DM Sans', system-ui, -apple-system, sans-serif;
+  --font-disp: 'Fraunces', Georgia, serif;
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--font-ui);
+  background: var(--linen);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+}
+
+.serif { font-family: var(--font-disp); }
+button, input, textarea, select { font-family: var(--font-ui); }
+
+/* ── Scrollbar ───────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 0; display: none; }
+* { scrollbar-width: none; }
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+.btn-primary {
+  background: linear-gradient(145deg, #2D5441 0%, #1A3028 100%);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-lg);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s;
+  box-shadow: 0 3px 14px rgba(26,48,40,0.35), 0 1px 4px rgba(26,48,40,0.2);
+}
+.btn-primary:hover { box-shadow: 0 6px 20px rgba(26,48,40,0.4), 0 2px 6px rgba(26,48,40,0.2); }
+.btn-primary:active { transform: scale(0.97); opacity: 0.9; }
+
+.btn-ghost {
+  background: rgba(255,255,255,0.75);
+  color: var(--charcoal);
+  border: 1px solid rgba(0,0,0,0.07);
+  border-radius: var(--r-md);
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.btn-ghost:hover { background: rgba(255,255,255,0.98); box-shadow: var(--sh-sm); }
+.btn-ghost:active { transform: scale(0.98); }
+
+/* ── Tab bar ─────────────────────────────────────────────────── */
+.tab-bar {
+  background: rgba(253,252,250,0.88);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-top: 1px solid rgba(0,0,0,0.06);
+  box-shadow: 0 -2px 20px rgba(0,0,0,0.05);
+}
+
+/* ── Cards ───────────────────────────────────────────────────── */
+.card {
+  background: var(--white);
+  border-radius: var(--r-xl);
+  box-shadow: var(--sh-sm);
+  border: 1px solid rgba(0,0,0,0.04);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card:active { transform: scale(0.985); }
+
+/* ── Inputs ──────────────────────────────────────────────────── */
+input, textarea, select {
+  font-family: var(--font-ui);
+}
+input::placeholder, textarea::placeholder { color: var(--silver); }

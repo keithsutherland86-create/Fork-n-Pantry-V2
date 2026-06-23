@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"I:\\\\My Drive\\\\Misc\\\\Fnp\\\\\" 2>/dev/null || dir \"I:\\\\\\\\My Drive\\\\\\\\Misc\\\\\\\\Fnp\\\\\\\\\" 2>/dev/null)",
+      "PowerShell(\\(Get-Content \"I:\\\\My Drive\\\\Misc\\\\Fnp\\\\cookbook-pwa-9\\\\cookbook-pwa\\\\app\\\\page.js\"\\).Count)",
+      "PowerShell([System.IO.File]::Copy\\(\"I:\\\\My Drive\\\\Misc\\\\Fnp\\\\cookbook-pwa-9\\\\cookbook-pwa\\\\app\\\\page.js\", \"C:\\\\Users\\\\User\\\\Documents\\\\FNP\\\\cookbook-pwa\\\\app\\\\page.js\", $true\\))",
+      "Bash(npm run *)"
+    ]
+  }
+}

@@ -19,7 +19,8 @@ export async function POST(req) {
       } catch {}
     }
     if (html) {
-      const patterns = [
+      // Extract og:image
+      const imgPatterns = [
         /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
         /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
         /<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']/i,
@@ -27,13 +28,56 @@ export async function POST(req) {
         /"thumbnailUrl"\s*:\s*"([^"]+)"/i,
         /"image"\s*:\s*"(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i,
       ];
-      for (const p of patterns) {
+      for (const p of imgPatterns) {
         const m = html.match(p);
         if (m?.[1]?.startsWith("http")) { ogImage = m[1]; break; }
       }
       const t = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
       if (t) ogTitle = t[1];
-      pageText = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi,"").replace(/<script[^>]*>[\s\S]*?<\/script>/gi,"").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim().slice(0,5000);
+
+      // Extract JSON-LD structured recipe data (most recipe sites include this)
+      const ldMatches = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+      for (const match of ldMatches) {
+        try {
+          const json = JSON.parse(match[1].trim());
+          const items = Array.isArray(json) ? json : (json["@graph"] || [json]);
+          const recipe = items.find(i => (i["@type"] === "Recipe" || (Array.isArray(i["@type"]) && i["@type"].includes("Recipe"))));
+          if (recipe) {
+            // Extract image from JSON-LD if not found in meta tags
+            if (!ogImage) {
+              const img = recipe.image;
+              let imgUrl = typeof img === "string" ? img : Array.isArray(img) ? (typeof img[0] === "string" ? img[0] : img[0]?.url || img[0]?.contentUrl) : img?.url || img?.contentUrl;
+              if (imgUrl) imgUrl = imgUrl.replace(/&amp;/g,"&").replace(/&#38;/g,"&");
+              if (imgUrl?.startsWith("http")) ogImage = imgUrl;
+            }
+            // Build a clean text summary for Claude from the structured data
+            const ingList = (recipe.recipeIngredient || []).join("\n");
+            const stepList = (recipe.recipeInstructions || []).map((s,i) => `${i+1}. ${typeof s === "string" ? s : s.text || ""}`).join("\n");
+            pageText = `Title: ${recipe.name || ogTitle}
+Description: ${recipe.description || ""}
+Yield: ${recipe.recipeYield || ""}
+Prep time: ${recipe.prepTime || ""}
+Cook time: ${recipe.cookTime || ""}
+Total time: ${recipe.totalTime || ""}
+Category: ${recipe.recipeCategory || ""}
+Cuisine: ${recipe.recipeCuisine || ""}
+
+INGREDIENTS:
+${ingList}
+
+INSTRUCTIONS:
+${stepList}
+
+Nutrition per serving: calories ${recipe.nutrition?.calories || ""}, protein ${recipe.nutrition?.proteinContent || ""}, carbs ${recipe.nutrition?.carbohydrateContent || ""}, fat ${recipe.nutrition?.fatContent || ""}`.trim();
+            break;
+          }
+        } catch {}
+      }
+
+      // Fallback to raw text if no JSON-LD found
+      if (!pageText) {
+        pageText = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi,"").replace(/<script[^>]*>[\s\S]*?<\/script>/gi,"").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim().slice(0,5000);
+      }
     }
 
     // ── Step 2: If no image from direct fetch, try Microlink (headless browser, bypasses bot blocking) ──
@@ -100,6 +144,10 @@ export async function POST(req) {
   });
 
   const data = await res.json();
+  if(!res.ok || data.error) {
+    console.error("Claude API error:", JSON.stringify(data));
+    return Response.json({ ok:false, error: data.error?.message || "API error" }, { status:500 });
+  }
   const text = data.content?.find(b=>b.type==="text")?.text || "{}";
 
   try {

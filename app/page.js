@@ -206,7 +206,7 @@ function RecipeCard({recipe,onOpen,onDelete,onToggleFav}){
         <RImg recipe={recipe} style={{width:"100%",height:"100%"}}/>
         <div style={{position:"absolute",inset:0,background:"linear-gradient(transparent 40%,rgba(10,18,14,.72))"}}/>
         {src&&<div style={{position:"absolute",bottom:12,left:14,fontSize:10,color:"rgba(255,255,255,.75)",fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase"}}>{src}</div>}
-        <button onClick={e=>{e.stopPropagation();onDelete(recipe.id);}} style={{...glassBtn,position:"absolute",top:12,right:12}}>×</button>
+        <button onClick={e=>{e.stopPropagation();if(window.confirm(`Delete "${recipe.title}"?`))onDelete(recipe.id);}} style={{...glassBtn,position:"absolute",top:12,right:12}}>×</button>
         {onToggleFav&&<button onClick={e=>{e.stopPropagation();onToggleFav();}} style={{...glassBtn,position:"absolute",top:12,left:12,fontSize:recipe.fav?16:14}}>{recipe.fav?"❤️":"🤍"}</button>}
         {recipe.nutrition?.calories>0&&(
           <div style={{position:"absolute",top:12,left:onToggleFav?50:12,background:"rgba(10,18,14,.52)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.18)",borderRadius:20,padding:"4px 11px",fontSize:11,color:"rgba(255,255,255,.95)",fontWeight:700}}>🔥 {recipe.nutrition.calories} cal</div>

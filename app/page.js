@@ -1357,6 +1357,116 @@ function SettingsTab(){
   );
 }
 
+// ─── SCAN TAB ─────────────────────────────────────────────────────────────────
+function ScanTab(){
+  const[loading,setLoading]=useState(false);
+  const[result,setResult]=useState(null);
+  const[error,setError]=useState("");
+  const[imgPreview,setImgPreview]=useState(null);
+  const fileRef=useRef(null);
+
+  async function scan(base64,mediaType){
+    setLoading(true);setError("");setResult(null);
+    try{
+      const res=await fetch("/api/parse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({imageBase64:base64,imageMediaType:mediaType,mode:"nutrition"})});
+      const data=await res.json();
+      if(!data.ok)throw new Error();
+      setResult(data);
+    }catch{setError("Couldn't scan — try again.");}
+    finally{setLoading(false);}
+  }
+
+  function handleFile(e){
+    const file=e.target.files?.[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      const dataUrl=ev.target.result;
+      setImgPreview(dataUrl);
+      scan(dataUrl.split(",")[1],file.type||"image/jpeg");
+    };
+    reader.readAsDataURL(file);
+    e.target.value="";
+  }
+
+  function addToGrocery(){
+    if(!result?.ingredients?.length)return;
+    const newItems=result.ingredients.map(text=>({id:Date.now().toString()+Math.random(),text,recipe:result.summary||"Scanned",checked:false}));
+    const existing=JSON.parse(localStorage.getItem(KEYS.g)||"[]");
+    localStorage.setItem(KEYS.g,JSON.stringify([...existing,...newItems]));
+    alert(`${newItems.length} items added to grocery list`);
+  }
+
+  return(
+    <div style={{flex:1,overflowY:"auto",paddingBottom:90}}>
+      <div style={{padding:"18px 18px 0"}}>
+        <div className="serif" style={{fontWeight:600,fontSize:22,color:"var(--forest)",marginBottom:4}}>Ingredient Scanner</div>
+        <div style={{fontSize:13,color:"var(--dust)",marginBottom:20,lineHeight:1.6}}>Take a photo of ingredients or a meal — AI will identify what's there and estimate the nutrition.</div>
+
+        <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{display:"none"}}/>
+
+        {!loading&&!result&&(
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <button onClick={()=>{if(fileRef.current){fileRef.current.removeAttribute("capture");fileRef.current.click();}}} className="btn-primary"
+              style={{width:"100%",padding:"18px 0",borderRadius:"var(--r-lg)",fontSize:16,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+              📷 Open Camera
+            </button>
+            <button onClick={()=>{if(fileRef.current){fileRef.current.setAttribute("capture","environment");fileRef.current.click();}}} className="btn-ghost"
+              style={{width:"100%",padding:"16px 0",borderRadius:"var(--r-lg)",fontSize:15,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+              🖼️ Choose from Library
+            </button>
+          </div>
+        )}
+
+        {loading&&(
+          <div style={{textAlign:"center",paddingTop:40}}>
+            {imgPreview&&<img src={imgPreview} style={{width:140,height:140,objectFit:"cover",borderRadius:16,marginBottom:18,boxShadow:"var(--sh-md)"}}/>}
+            <div style={{fontSize:40,marginBottom:12}}>🔍</div>
+            <div className="serif" style={{fontWeight:600,fontSize:20,color:"var(--forest)",marginBottom:6}}>Scanning…</div>
+            <div style={{fontSize:13,color:"var(--dust)"}}>AI is identifying ingredients</div>
+          </div>
+        )}
+
+        {error&&<div style={{color:"#B91C1C",fontSize:14,marginBottom:16,textAlign:"center"}}>{error}</div>}
+
+        {result&&(
+          <div>
+            {imgPreview&&<img src={imgPreview} style={{width:"100%",height:180,objectFit:"cover",borderRadius:16,marginBottom:16,boxShadow:"var(--sh-md)"}}/>}
+            <div className="serif" style={{fontWeight:600,fontSize:20,color:"var(--forest)",marginBottom:12}}>{result.summary||"Scan result"}</div>
+
+            {/* Nutrition grid */}
+            {result.nutrition&&(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+                {[["🔥","Calories",result.nutrition.calories,"kcal"],["💪","Protein",result.nutrition.protein,"g"],["🌾","Carbs",result.nutrition.carbs,"g"],["🥑","Fat",result.nutrition.fat,"g"]].map(([icon,label,val,unit])=>(
+                  <div key={label} style={{background:"var(--cream)",borderRadius:"var(--r-md)",padding:"12px",border:"1px solid var(--sage-lt)",textAlign:"center"}}>
+                    <div style={{fontSize:22,marginBottom:4}}>{icon}</div>
+                    <div style={{fontWeight:700,fontSize:18,color:"var(--forest)"}}>{val}<span style={{fontSize:11,fontWeight:500,color:"var(--dust)"}}>{unit}</span></div>
+                    <div style={{fontSize:11,color:"var(--dust)",fontWeight:600}}>{label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Ingredient list */}
+            {result.ingredients?.length>0&&(
+              <div style={{background:"var(--cream)",borderRadius:"var(--r-md)",padding:"14px",border:"1px solid var(--sage-lt)",marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.07em",textTransform:"uppercase",marginBottom:10}}>Detected ingredients</div>
+                {result.ingredients.map((ing,i)=>(
+                  <div key={i} style={{fontSize:14,color:"var(--ink)",padding:"6px 0",borderBottom:i<result.ingredients.length-1?"1px solid var(--sage-pale)":"none"}}>· {ing}</div>
+                ))}
+              </div>
+            )}
+
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={addToGrocery} className="btn-primary" style={{flex:1,padding:"13px 0",borderRadius:"var(--r-md)",fontSize:14}}>+ Add to Grocery List</button>
+              <button onClick={()=>{setResult(null);setImgPreview(null);setError("");}} className="btn-ghost" style={{flex:1,padding:"13px 0",borderRadius:"var(--r-md)",fontSize:14}}>Scan again</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Tab bar ──────────────────────────────────────────────────────────────────
 function TabBar({tab,setTab}){
   const tabs=[
@@ -1380,6 +1490,13 @@ function TabBar({tab,setTab}){
         <circle cx="8" cy="14" r="1.5" fill={a?"#fff":"var(--mist)"}/>
         <circle cx="12" cy="14" r="1.5" fill={a?"#fff":"var(--mist)"}/>
         <circle cx="16" cy="14" r="1.5" fill={a?"#fff":"var(--mist)"}/>
+      </svg>)},
+    {id:"scan",label:"Scan",icon:a=>(
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+        <rect x="2" y="7" width="20" height="13" rx="2.5" fill={a?"var(--moss)":"none"} stroke={a?"var(--moss)":"var(--mist)"} strokeWidth="1.8"/>
+        <circle cx="12" cy="13.5" r="3" fill={a?"#fff":"none"} stroke={a?"#fff":"var(--mist)"} strokeWidth="1.8"/>
+        <path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2" stroke={a?"var(--moss)":"var(--mist)"} strokeWidth="1.8" strokeLinecap="round"/>
+        <circle cx="18" cy="10" r="1" fill={a?"#fff":"var(--mist)"}/>
       </svg>)},
     {id:"grocery",label:"Grocery",icon:a=>(
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -1482,6 +1599,7 @@ function AppInner(){
       {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")}/>}
       {tab==="categories"&&<CategoriesTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe}/>}
       {tab==="planner"&&<PlannerTab recipes={recipes} planner={planner} setPlanner={setPlanner} onUpdate={updateRecipe}/>}
+      {tab==="scan"&&<ScanTab/>}
       {tab==="grocery"&&<GroceryTab/>}
       {tab==="settings"&&<SettingsTab/>}
       <TabBar tab={tab} setTab={setTab}/>

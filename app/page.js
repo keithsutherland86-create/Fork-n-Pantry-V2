@@ -512,7 +512,24 @@ function RecipeModal({recipe,onClose,onUpdate}){
           {recipe.ingredients?.length>0&&<>
             <div style={{display:"flex",alignItems:"center",marginBottom:10,paddingBottom:7,borderBottom:"1.5px solid var(--parchment)"}}>
               <h3 className="serif" style={{fontSize:19,fontWeight:600,color:"var(--forest)",flex:1}}>Ingredients</h3>
-              {checkedIngs.size>0&&<button onClick={()=>setCheckedIngs(new Set())} style={{fontSize:12,color:"var(--mist)",background:"none",border:"none",cursor:"pointer"}}>Reset</button>}
+              <div style={{display:"flex",gap:6}}>
+                {checkedIngs.size>0&&<button onClick={()=>setCheckedIngs(new Set())} style={{fontSize:12,color:"var(--mist)",background:"none",border:"none",cursor:"pointer"}}>Reset</button>}
+                {checkedIngs.size>0&&<button onClick={()=>{
+                  const lines=recipe.ingredients.filter((_,i)=>checkedIngs.has(i)).map(ing=>hasStr?fmtIng(ing,unit,scale):(typeof ing==="string"?ing:ing.name||""));
+                  const newItems=lines.map(text=>({id:Date.now().toString()+Math.random(),text,recipe:recipe.title,checked:false}));
+                  const existing=JSON.parse(localStorage.getItem(KEYS.g)||"[]");
+                  localStorage.setItem(KEYS.g,JSON.stringify([...existing,...newItems]));
+                  setCheckedIngs(new Set());
+                  alert(`${newItems.length} ingredient${newItems.length!==1?"s":""} added to grocery list`);
+                }} className="btn-primary" style={{fontSize:11,padding:"3px 10px",borderRadius:20}}>+ Grocery</button>}
+                <button onClick={()=>{
+                  const lines=recipe.ingredients.map(ing=>hasStr?fmtIng(ing,unit,scale):(typeof ing==="string"?ing:ing.name||""));
+                  const newItems=lines.map(text=>({id:Date.now().toString()+Math.random(),text,recipe:recipe.title,checked:false}));
+                  const existing=JSON.parse(localStorage.getItem(KEYS.g)||"[]");
+                  localStorage.setItem(KEYS.g,JSON.stringify([...existing,...newItems]));
+                  alert(`All ${newItems.length} ingredients added to grocery list`);
+                }} className="btn-ghost" style={{fontSize:11,padding:"3px 10px",borderRadius:20}}>+ All</button>
+              </div>
             </div>
             <ul style={{listStyle:"none",marginBottom:20}}>
               {recipe.ingredients.map((ing,i)=>{

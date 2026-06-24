@@ -732,16 +732,16 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[]}){
             </div>
           ):(
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
-            <button onClick={()=>{ if(fileRef.current){fileRef.current.removeAttribute("capture");fileRef.current.click();} }}
-              style={{...inp,border:"2px dashed var(--sage-lt)",borderRadius:"var(--r-lg)",padding:"28px 20px",textAlign:"center",cursor:"pointer",background:"var(--sage-pale)",color:"var(--moss)"}}>
-              <div style={{fontSize:36,marginBottom:8}}>🖼️</div>
-              <div style={{fontWeight:700,fontSize:15}}>Upload a photo</div>
-              <div style={{fontSize:13,color:"var(--mist)",marginTop:4}}>{photoMode==="nutrition"?"Photo of your ingredients or meal":"Screenshot, photo of recipe card, or any image"}</div>
-            </button>
             <button onClick={()=>{ if(fileRef.current){fileRef.current.setAttribute("capture","environment");fileRef.current.click();} }}
+              style={{...inp,border:"2px dashed var(--sage-lt)",borderRadius:"var(--r-lg)",padding:"28px 20px",textAlign:"center",cursor:"pointer",background:"var(--sage-pale)",color:"var(--moss)"}}>
+              <div style={{fontSize:36,marginBottom:8}}>📸</div>
+              <div style={{fontWeight:700,fontSize:15}}>Take a photo</div>
+              <div style={{fontSize:13,color:"var(--mist)",marginTop:4}}>{photoMode==="nutrition"?"Point camera at your ingredients or meal":"Point camera at a recipe or cookbook page"}</div>
+            </button>
+            <button onClick={()=>{ if(fileRef.current){fileRef.current.removeAttribute("capture");fileRef.current.click();} }}
               style={{...inp,border:"2px dashed var(--sage-lt)",borderRadius:"var(--r-lg)",padding:"22px 20px",textAlign:"center",cursor:"pointer",background:"var(--cream)",color:"var(--moss)"}}>
-              <div style={{fontSize:32,marginBottom:6}}>📸</div>
-              <div style={{fontWeight:700,fontSize:14}}>Take a photo</div>
+              <div style={{fontSize:32,marginBottom:6}}>🖼️</div>
+              <div style={{fontWeight:700,fontSize:14}}>Choose from library</div>
               <div style={{fontSize:12,color:"var(--mist)",marginTop:3}}>{photoMode==="nutrition"?"Point camera at your food or ingredients":"Point camera at a recipe or cookbook page"}</div>
             </button>
           </div>
@@ -1416,11 +1416,11 @@ function ScanTab(){
 
         {!loading&&!result&&(
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
-            <button onClick={()=>{if(fileRef.current){fileRef.current.removeAttribute("capture");fileRef.current.click();}}} className="btn-primary"
+            <button onClick={()=>{if(fileRef.current){fileRef.current.setAttribute("capture","environment");fileRef.current.click();}}} className="btn-primary"
               style={{width:"100%",padding:"18px 0",borderRadius:"var(--r-lg)",fontSize:16,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
               📷 Open Camera
             </button>
-            <button onClick={()=>{if(fileRef.current){fileRef.current.setAttribute("capture","environment");fileRef.current.click();}}} className="btn-ghost"
+            <button onClick={()=>{if(fileRef.current){fileRef.current.removeAttribute("capture");fileRef.current.click();}}} className="btn-ghost"
               style={{width:"100%",padding:"16px 0",borderRadius:"var(--r-lg)",fontSize:15,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
               🖼️ Choose from Library
             </button>

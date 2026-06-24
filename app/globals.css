@@ -129,3 +129,14 @@ input, textarea, select {
   font-family: var(--font-ui);
 }
 input::placeholder, textarea::placeholder { color: var(--silver); }
+
+/* ── Dark mode ───────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --linen: #0F1A14;
+  --cream: #1A2820;
+  --parchment: #1E3028;
+  --ink: #F0EDE8;
+  --charcoal: #C8D4CC;
+  --dust: #8FA89A;
+  --white: #1E3028;
+}

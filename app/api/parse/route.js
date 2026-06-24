@@ -1,6 +1,29 @@
 export async function POST(req) {
   const body = await req.json();
-  const { input = "", imageBase64 = "", imageMediaType = "image/jpeg" } = body;
+  const { input = "", imageBase64 = "", imageMediaType = "image/jpeg", mode = "" } = body;
+
+  // ── Nutrition scan mode ───────────────────────────────────────────────────────
+  if (mode === "nutrition" && imageBase64) {
+    const msgContent = [
+      { type:"image", source:{ type:"base64", media_type:imageMediaType, data:imageBase64 } },
+      { type:"text", text:`Look at this image of ingredients/food. List what you can see and estimate the total nutrition.\nReturn ONLY raw JSON, no markdown:\n{"ingredients": ["2 chicken breasts", "1 cup rice"], "nutrition": {"calories": 450, "protein": 35, "carbs": 60, "fat": 8}, "summary": "Grilled chicken with rice"}` }
+    ];
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "x-api-key":process.env.ANTHROPIC_API_KEY, "anthropic-version":"2023-06-01" },
+      body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:600, messages:[{ role:"user", content:msgContent }] }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) return Response.json({ ok:false, error:"API error" }, { status:500 });
+    const text = data.content?.find(b=>b.type==="text")?.text || "{}";
+    try {
+      const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
+      return Response.json({ ok:true, mode:"nutrition", ...parsed });
+    } catch {
+      return Response.json({ ok:false, error:"Parse failed" }, { status:422 });
+    }
+  }
+
   const isUrl = input.trim().startsWith("http");
   let pageText = "", ogImage = "", ogTitle = "";
 

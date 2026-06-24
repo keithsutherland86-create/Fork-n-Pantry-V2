@@ -1539,8 +1539,58 @@ function TabBar({tab,setTab}){
   );
 }
 
+// ─── Help modal ───────────────────────────────────────────────────────────────
+const HELP_SECTIONS=[
+  {icon:"📋",title:"Adding Recipes",body:"Tap + Add Recipe on the Recipes tab. Paste a URL from any recipe website and AI will extract everything automatically. You can also take a photo of a cookbook page, paste copied text, or enter a recipe manually."},
+  {icon:"🔍",title:"Searching & Filtering",body:"Use the search bar to find recipes by name, tag, or source. Filter by tag using the pills below the search bar. Toggle ❤️ Favourites to see only your saved favourites. Use A–Z or Calories sort to reorder."},
+  {icon:"🥗",title:"What Can I Make?",body:"Tap '🥗 What can I make?' on the Recipes tab. Type in ingredients you have on hand separated by commas — the app will score and rank your recipes by how many ingredients match."},
+  {icon:"👨‍🍳",title:"Cook Mode",body:"Open any recipe and scroll to the Method section. Tap 'Cook Mode' for a full-screen step-by-step guide with a large font. The screen stays on while you cook. Swipe back or tap × to exit."},
+  {icon:"⏱",title:"Timers",body:"Inside a recipe, tap the prep time or cook time chip to start a countdown timer. The timer banner shows at the top of the recipe. Tap Pause/Resume as needed. The banner turns amber when under 30 seconds and red when done."},
+  {icon:"🛒",title:"Grocery List",body:"Open any recipe and tap '+ All' under Ingredients to add everything to your list, or tick individual ingredients and tap '+ Grocery' to add just those. The Grocery tab shows your full list. Tap items to check them off. Share the list via the 📤 button."},
+  {icon:"📅",title:"Meal Planner",body:"The Planner tab shows a weekly meal grid. Tap any slot to assign a recipe. Use the ‹ › arrows to navigate between weeks. Tap 'Grocery' to build a shopping list from all planned meals automatically."},
+  {icon:"📷",title:"Ingredient Scanner",body:"Go to the Scan tab (camera icon). Take a photo of ingredients, a meal, or food packaging. AI will identify what it sees and estimate the total calories, protein, carbs, and fat. Tap '+ Add to Grocery List' to add identified ingredients."},
+  {icon:"🗂",title:"Categories",body:"The Categories tab lets you group recipes into custom collections — e.g. 'Weeknight Dinners' or 'Meal Prep'. Create a category, choose a colour, then add recipes to it. Tap a category to browse its recipes."},
+  {icon:"📤",title:"Sharing",body:"Open any recipe and tap the 📤 Share button to share the recipe title, ingredients, and method via any app. On the Grocery tab the 📤 button shares your shopping list. Both fall back to clipboard copy if native sharing isn't available."},
+  {icon:"💾",title:"Backup & Export",body:"On the Recipes tab, scroll the filter pills to find ⬇ Export. This downloads all your recipes as a JSON file you can keep as a backup or import into another device in future."},
+  {icon:"🌙",title:"Dark Mode",body:"Go to Settings (gear icon) and toggle Dark Mode. The theme is saved and applied automatically each time you open the app."},
+];
+
+function HelpModal({onClose}){
+  const[open,setOpen]=useState(null);
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(15,24,17,.65)",backdropFilter:"blur(5px)",WebkitBackdropFilter:"blur(5px)",zIndex:600,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"var(--linen)",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"92vh",display:"flex",flexDirection:"column",boxShadow:"0 -8px 48px rgba(15,24,17,.25)",paddingBottom:"env(safe-area-inset-bottom)"}}>
+        <div style={{width:34,height:4,background:"var(--sage-lt)",borderRadius:2,margin:"12px auto 0",flexShrink:0}}/>
+        <div style={{padding:"14px 20px 10px",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div className="serif" style={{fontWeight:600,fontSize:22,color:"var(--forest)"}}>Help & Features</div>
+            <div style={{fontSize:13,color:"var(--dust)",marginTop:2}}>Tap any topic to learn more</div>
+          </div>
+          <button onClick={onClose} style={{background:"var(--sage-pale)",border:"none",borderRadius:"50%",width:32,height:32,fontSize:18,cursor:"pointer",color:"var(--forest)",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+        <div style={{overflowY:"auto",flex:1,padding:"0 16px 24px"}}>
+          {HELP_SECTIONS.map((s,i)=>(
+            <div key={i} style={{marginBottom:8,borderRadius:"var(--r-md)",border:"1px solid var(--sage-lt)",overflow:"hidden",background:"var(--cream)"}}>
+              <button onClick={()=>setOpen(open===i?null:i)} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",background:"none",border:"none",cursor:"pointer",textAlign:"left"}}>
+                <span style={{fontSize:24,flexShrink:0}}>{s.icon}</span>
+                <span style={{flex:1,fontWeight:600,fontSize:15,color:"var(--ink)"}}>{s.title}</span>
+                <span style={{color:"var(--sage)",fontSize:18,transition:"transform .2s",display:"inline-block",transform:open===i?"rotate(90deg)":"none"}}>›</span>
+              </button>
+              {open===i&&(
+                <div style={{padding:"0 16px 16px",fontSize:14,color:"var(--charcoal)",lineHeight:1.75,borderTop:"1px solid var(--sage-pale)"}}>
+                  <div style={{paddingTop:12}}>{s.body}</div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Header ───────────────────────────────────────────────────────────────────
-function Header({count}){
+function Header({count,onHelp}){
   return(
     <div style={{background:"linear-gradient(160deg,#1E3828 0%,#152A20 60%,#0F1F17 100%)",paddingTop:"env(safe-area-inset-top)",flexShrink:0,boxShadow:"0 1px 0 rgba(255,255,255,.06),0 4px 24px rgba(10,20,14,.35)"}}>
       <div style={{padding:"14px 18px 15px",display:"flex",alignItems:"center",gap:12}}>
@@ -1551,6 +1601,7 @@ function Header({count}){
             {count===0?"Your collection awaits":`${count} recipe${count!==1?"s":""} saved`}
           </div>
         </div>
+        <button onClick={onHelp} style={{width:30,height:30,borderRadius:"50%",background:"rgba(255,255,255,.12)",border:"1px solid rgba(255,255,255,.2)",color:"rgba(255,255,255,.85)",fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</button>
         <div style={{width:8,height:8,borderRadius:"50%",background:"#4ADE80",boxShadow:"0 0 8px rgba(74,222,128,.6)",flexShrink:0}}/>
       </div>
     </div>
@@ -1565,6 +1616,7 @@ function AppInner(){
   const[tab,setTab]=useState("recipes");
   const[sharedPrefill,setSharedPrefill]=useState("");
   const[backToast,setBackToast]=useState(false);
+  const[showHelp,setShowHelp]=useState(false);
   const lastBackRef=useRef(0);
   const searchParams=useSearchParams();
   const router=useRouter();
@@ -1607,7 +1659,8 @@ function AppInner(){
 
   return(
     <div style={{height:"100dvh",display:"flex",flexDirection:"column",background:"var(--linen)"}}>
-      <Header count={recipes.length}/>
+      <Header count={recipes.length} onHelp={()=>setShowHelp(true)}/>
+      {showHelp&&<HelpModal onClose={()=>setShowHelp(false)}/>}
       {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")}/>}
       {tab==="categories"&&<CategoriesTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe}/>}
       {tab==="planner"&&<PlannerTab recipes={recipes} planner={planner} setPlanner={setPlanner} onUpdate={updateRecipe}/>}

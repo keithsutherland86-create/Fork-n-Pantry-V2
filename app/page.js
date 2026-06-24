@@ -438,6 +438,15 @@ function RecipeModal({recipe,onClose,onUpdate}){
   const[checkedIngs,setCheckedIngs]=useState(new Set());
   const[timer,setTimer]=useState(null);
   const timerRef=useRef(null);
+  const imgInputRef=useRef(null);
+
+  function handleImgReplace(e){
+    const file=e.target.files?.[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>onUpdate({...recipe,ogImage:ev.target.result});
+    reader.readAsDataURL(file);
+    e.target.value="";
+  }
 
   useEffect(()=>{
     if(recipe){setServings(recipe.servings||4);setEditing(false);setCookMode(false);setCheckedIngs(new Set());setTimer(null);}
@@ -485,10 +494,12 @@ function RecipeModal({recipe,onClose,onUpdate}){
               {recipe.cookTime&&<button onClick={()=>startTimer("Cook",recipe.cookTime)} style={{...btnGlass,borderRadius:20,padding:"3px 10px",fontSize:12,fontFamily:"var(--font-ui)",fontWeight:600}}>🔥 {recipe.cookTime}</button>}
             </div>
           </div>
+          <input ref={imgInputRef} type="file" accept="image/*" onChange={handleImgReplace} style={{display:"none"}}/>
           <button onClick={onClose} style={{...btnGlass,position:"absolute",top:14,right:14,borderRadius:"50%",width:34,height:34,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
           <button onClick={()=>setEditing(true)} style={{...btnGlass,position:"absolute",top:14,right:56,borderRadius:20,padding:"7px 13px",fontSize:12,fontWeight:700}}>✏️ Edit</button>
           <button onClick={shareRecipe} style={{...btnGlass,position:"absolute",top:14,right:118,borderRadius:20,padding:"7px 13px",fontSize:12,fontWeight:700}}>📤 Share</button>
           <button onClick={()=>onUpdate({...recipe,fav:!recipe.fav})} style={{...btnGlass,position:"absolute",top:14,left:14,borderRadius:"50%",width:34,height:34,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>{recipe.fav?"❤️":"🤍"}</button>
+          <button onClick={()=>imgInputRef.current?.click()} style={{...btnGlass,position:"absolute",bottom:14,right:14,borderRadius:20,padding:"5px 11px",fontSize:12,fontWeight:700}}>📷 Change photo</button>
         </div>
 
         {/* Timer banner */}

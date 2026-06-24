@@ -248,7 +248,6 @@ function ScalerBar({servings,setServings,base,unit,setUnit}){
           <span className="serif" style={{fontSize:20,fontWeight:600,color:"var(--forest)",minWidth:26,textAlign:"center"}}>{servings}</span>
           <button onClick={()=>setServings(s=>s+1)} style={{width:30,height:30,borderRadius:"50%",border:"none",background:"linear-gradient(145deg,var(--sage-lt),var(--sage))",color:"var(--forest)",fontSize:17,cursor:"pointer",fontWeight:700,boxShadow:"var(--sh-xs)"}}>+</button>
         </div>
-        {scale!==1&&<span style={{fontSize:11,color:"var(--mist)",background:"var(--cream)",borderRadius:6,padding:"2px 7px",border:"1px solid var(--sage-lt)"}}>{scale>1?`×${fmtN(scale)}`:`÷${fmtN(1/scale)}`}</span>}
       </div>
       <div style={{display:"flex",gap:4,background:"rgba(255,255,255,.5)",borderRadius:10,padding:3}}>
         {["original","metric","imperial"].map(u=>(

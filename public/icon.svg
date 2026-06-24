@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2C5040"/>
+      <stop offset="100%" stop-color="#132318"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0%" y1="0%" x2="0%" y2="60%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="fork" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#A8D8BC"/>
+      <stop offset="100%" stop-color="#6AAF8A"/>
+    </linearGradient>
+    <linearGradient id="knife" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#C8DDD3"/>
+      <stop offset="100%" stop-color="#8BBFAA"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- App background rounded rect -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- Shine overlay -->
+  <rect width="512" height="280" rx="112" fill="url(#shine)"/>
+  <!-- Subtle inner border -->
+  <rect x="2" y="2" width="508" height="508" rx="110" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="3"/>
+
+  <!-- Plate circle -->
+  <circle cx="256" cy="276" r="148" fill="#1E3D2E" filter="url(#shadow)"/>
+  <circle cx="256" cy="276" r="148" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="3"/>
+  <!-- Plate inner ring -->
+  <circle cx="256" cy="276" r="118" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="2"/>
+
+  <!-- Fork (left) -->
+  <g transform="translate(198,120)" filter="url(#shadow)">
+    <!-- Tines -->
+    <rect x="14" y="0" width="7" height="72" rx="3.5" fill="url(#fork)"/>
+    <rect x="26" y="0" width="7" height="72" rx="3.5" fill="url(#fork)"/>
+    <rect x="38" y="0" width="7" height="72" rx="3.5" fill="url(#fork)"/>
+    <!-- Neck -->
+    <rect x="20" y="68" width="19" height="18" rx="4" fill="url(#fork)"/>
+    <!-- Handle -->
+    <rect x="22" y="84" width="15" height="138" rx="7.5" fill="url(#fork)"/>
+    <!-- Handle end cap -->
+    <ellipse cx="29.5" cy="222" rx="7.5" ry="5" fill="#6AAF8A"/>
+  </g>
+
+  <!-- Knife (right) -->
+  <g transform="translate(282,120)" filter="url(#shadow)">
+    <!-- Blade -->
+    <path d="M15 0 C15 0 30 8 30 52 L15 52 Z" fill="url(#knife)"/>
+    <!-- Bolster -->
+    <rect x="13" y="50" width="18" height="10" rx="3" fill="#9ABFB0"/>
+    <!-- Handle -->
+    <rect x="15" y="58" width="14" height="138" rx="7" fill="url(#knife)"/>
+    <!-- Rivets -->
+    <circle cx="22" cy="90" r="3" fill="rgba(255,255,255,0.25)"/>
+    <circle cx="22" cy="112" r="3" fill="rgba(255,255,255,0.25)"/>
+    <circle cx="22" cy="134" r="3" fill="rgba(255,255,255,0.25)"/>
+    <!-- Handle end cap -->
+    <ellipse cx="22" cy="196" rx="7" ry="4.5" fill="#8BBFAA"/>
+  </g>
+
+  <!-- Leaf accent top-right -->
+  <g transform="translate(350,80) rotate(35)">
+    <ellipse cx="0" cy="0" rx="18" ry="32" fill="#4A8A60" opacity="0.7"/>
+    <line x1="0" y1="-28" x2="0" y2="28" stroke="#7AB89A" stroke-width="2" opacity="0.6"/>
+  </g>
+  <g transform="translate(368,96) rotate(55)">
+    <ellipse cx="0" cy="0" rx="12" ry="22" fill="#3A7A50" opacity="0.5"/>
+  </g>
+
+  <!-- "FnP" subtle monogram on plate -->
+  <text x="256" y="292" text-anchor="middle" font-family="Georgia, serif" font-size="52" font-weight="700"
+    fill="rgba(255,255,255,0.06)" letter-spacing="4">FnP</text>
+</svg>

@@ -132,11 +132,54 @@ input::placeholder, textarea::placeholder { color: var(--silver); }
 
 /* ── Dark mode ───────────────────────────────────────────────── */
 [data-theme="dark"] {
-  --linen: #0F1A14;
-  --cream: #1A2820;
-  --parchment: #1E3028;
-  --ink: #F0EDE8;
-  --charcoal: #C8D4CC;
-  --dust: #8FA89A;
-  --white: #1E3028;
+  /* Backgrounds */
+  --linen:     #0D1510;
+  --cream:     #162018;
+  --parchment: #1C2B22;
+  --white:     #1C2B22;
+
+  /* Text */
+  --ink:       #EEE9E1;
+  --charcoal:  #C4D4CB;
+  --dust:      #8FA89A;
+  --silver:    #6B8A7A;
+
+  /* Brand greens — brighter in dark so they're visible */
+  --forest:    #7AB89A;
+  --pine:      #5FA080;
+  --sage:      #7AB89A;
+  --mint:      #9DD4B8;
+  --mist:      #8FA89A;
+  --moss:      #7AB89A;
+  --sage-pale: #1C2B22;
+  --sage-lt:   #2A3D30;
+  --bark:      #8FA89A;
+  --bark-lt:   #2A3D30;
+
+  /* Accents */
+  --amber:     #FBBF24;
+  --amber-lt:  #2D2310;
+  --rose:      #FB7185;
+  --rose-lt:   #2D1018;
+}
+
+[data-theme="dark"] .tab-bar {
+  background: rgba(13,21,16,0.92);
+  border-top-color: rgba(255,255,255,0.06);
+}
+
+[data-theme="dark"] .btn-ghost {
+  background: rgba(255,255,255,0.07);
+  color: var(--charcoal);
+  border-color: rgba(255,255,255,0.1);
+}
+
+[data-theme="dark"] .btn-ghost:hover {
+  background: rgba(255,255,255,0.12);
+}
+
+[data-theme="dark"] input,
+[data-theme="dark"] textarea,
+[data-theme="dark"] select {
+  color-scheme: dark;
 }

@@ -1370,18 +1370,19 @@ function SettingsTab(){
 // ─── SCAN TAB ─────────────────────────────────────────────────────────────────
 function ScanTab(){
   const[loading,setLoading]=useState(false);
-  const[result,setResult]=useState(null);
+  const[result,setResult]=useState(()=>{try{const v=localStorage.getItem("fnp_scan");return v?JSON.parse(v):null;}catch{return null;}});
   const[error,setError]=useState("");
-  const[imgPreview,setImgPreview]=useState(null);
+  const[imgPreview,setImgPreview]=useState(()=>{try{return localStorage.getItem("fnp_scan_img")||null;}catch{return null;}});
   const fileRef=useRef(null);
 
   async function scan(base64,mediaType){
-    setLoading(true);setError("");setResult(null);
+    setLoading(true);setError("");setResult(null);setImgPreview(null);
     try{
       const res=await fetch("/api/parse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({imageBase64:base64,imageMediaType:mediaType,mode:"nutrition"})});
       const data=await res.json();
       if(!data.ok)throw new Error();
       setResult(data);
+      try{localStorage.setItem("fnp_scan",JSON.stringify(data));}catch{}
     }catch{setError("Couldn't scan — try again.");}
     finally{setLoading(false);}
   }
@@ -1392,6 +1393,7 @@ function ScanTab(){
     reader.onload=ev=>{
       const dataUrl=ev.target.result;
       setImgPreview(dataUrl);
+      try{localStorage.setItem("fnp_scan_img",dataUrl);}catch{}
       scan(dataUrl.split(",")[1],file.type||"image/jpeg");
     };
     reader.readAsDataURL(file);
@@ -1468,7 +1470,7 @@ function ScanTab(){
 
             <div style={{display:"flex",gap:10}}>
               <button onClick={addToGrocery} className="btn-primary" style={{flex:1,padding:"13px 0",borderRadius:"var(--r-md)",fontSize:14}}>+ Add to Grocery List</button>
-              <button onClick={()=>{setResult(null);setImgPreview(null);setError("");}} className="btn-ghost" style={{flex:1,padding:"13px 0",borderRadius:"var(--r-md)",fontSize:14}}>Scan again</button>
+              <button onClick={()=>{setResult(null);setImgPreview(null);setError("");try{localStorage.removeItem("fnp_scan");localStorage.removeItem("fnp_scan_img");}catch{}}} className="btn-ghost" style={{flex:1,padding:"13px 0",borderRadius:"var(--r-md)",fontSize:14}}>Scan again</button>
             </div>
           </div>
         )}

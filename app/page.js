@@ -71,6 +71,9 @@ function aggregateItems(items){
   return result;
 }
 
+// ─── Global modal back-button registry ───────────────────────────────────────
+let _closeModal = null;
+
 // ─── Tag colours ──────────────────────────────────────────────────────────────
 const TPAL={breakfast:["#FEF9C3","#854D0E"],lunch:["#DCFCE7","#166534"],dinner:["#EDE9FE","#5B21B6"],dessert:["#FCE7F3","#9D174D"],snack:["#D1FAE5","#065F46"],vegetarian:["#DCFCE7","#14532D"],vegan:["#BBF7D0","#14532D"],chicken:["#FEF3C7","#92400E"],pasta:["#FEE2E2","#991B1B"],soup:["#D1FAE5","#065F46"],beef:["#FEE2E2","#991B1B"],fish:["#DBEAFE","#1E40AF"],salad:["#BBFBD0","#14532D"],quick:["#EDE9FE","#4C1D95"],seafood:["#DBEAFE","#1E40AF"]};
 const tb=t=>{const k=Object.keys(TPAL).find(k=>(t||"").toLowerCase().includes(k));return k?TPAL[k][0]:"#EBF3EC";};
@@ -451,6 +454,11 @@ function RecipeModal({recipe,onClose,onUpdate}){
   useEffect(()=>{
     if(recipe){setServings(recipe.servings||4);setEditing(false);setCookMode(false);setCheckedIngs(new Set());setTimer(null);}
   },[recipe?.id]);
+
+  useEffect(()=>{
+    if(recipe){ _closeModal=onClose; } else { _closeModal=null; }
+    return()=>{ _closeModal=null; };
+  },[recipe,onClose]);
 
   useEffect(()=>{
     if(timer?.running){
@@ -1234,6 +1242,7 @@ function GroceryTab(){
     setManualInput("");
   }
   function clearChecked(){setAndSave(is=>is.filter(i=>!i.checked));}
+  function clearAll(){if(items.length===0)return;if(confirm("Clear all grocery items?"))setAndSave([]);}
   async function shareList(){
     const text=items.filter(i=>!i.checked).map(i=>i.text).join("\n");
     if(navigator.share){await navigator.share({title:"Grocery List",text}).catch(()=>{});}
@@ -1254,6 +1263,7 @@ function GroceryTab(){
             <span style={{fontSize:12,color:"var(--mist)"}}>{unchecked.length} left</span>
             <button onClick={shareList} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"4px 11px",fontSize:11,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>📤 Share</button>
             {checked.length>0&&<button onClick={clearChecked} style={{background:"#FEE2E2",border:"1px solid #FECACA",borderRadius:20,padding:"4px 11px",fontSize:11,fontWeight:700,cursor:"pointer",color:"#991B1B"}}>Clear done</button>}
+            {items.length>0&&<button onClick={clearAll} style={{background:"#FEE2E2",border:"1px solid #FECACA",borderRadius:20,padding:"4px 11px",fontSize:11,fontWeight:700,cursor:"pointer",color:"#991B1B"}}>Clear all</button>}
           </div>
         </div>
 
@@ -1637,14 +1647,13 @@ function AppInner(){
 
   useEffect(()=>{
     function onPop(){
+      // Close recipe modal first if one is open
+      if(_closeModal){_closeModal();_closeModal=null;history.pushState({page:"app"},"");return;}
       const now=Date.now();
       const timeSinceLast=now-lastBackRef.current;
-      // If second back within 2 seconds — allow exit
       if(timeSinceLast<2000&&lastBackRef.current>0){return;}
       lastBackRef.current=now;
-      // First back: navigate within app
       if(tab!=="recipes"){setTab("recipes");history.pushState({page:"app"},"");return;}
-      // Already on recipes, no modal to close — show exit toast
       setBackToast(true);
       history.pushState({page:"app"},"");
       setTimeout(()=>setBackToast(false),2000);

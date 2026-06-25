@@ -30,7 +30,7 @@ console.log("✓ favicon.png");
 // Maskable icon (purpose: "maskable") — logo at 80% with dark green background padding
 // Android safe-zone requires the focal content to fit within the centre 80% circle
 const MASK_SIZE = 512;
-const LOGO_SIZE = Math.round(MASK_SIZE * 0.78); // logo occupies 78% — fits safe zone
+const LOGO_SIZE = Math.round(MASK_SIZE * 0.95); // logo occupies 95% — fills circle crop
 const pad = Math.round((MASK_SIZE - LOGO_SIZE) / 2);
 
 const logoResized = await sharp(cropped).resize(LOGO_SIZE, LOGO_SIZE).png().toBuffer();

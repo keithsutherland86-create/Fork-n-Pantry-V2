@@ -1373,14 +1373,18 @@ function ScanTab({recipes=[],onOpenRecipe}){
   const[imgPreview,setImgPreview]=useState(()=>{try{return localStorage.getItem("fnp_scan_img")||null;}catch{return null;}});
   const fileRef=useRef(null);
 
-  // Score saved recipes by how many scanned ingredients they contain
+  // Score saved recipes by how many scanned ingredients they contain.
+  // Uses whole-word matching to avoid "banana" matching "an" from a recipe ingredient.
   function matchedRecipes(){
     if(!result?.ingredients?.length||!recipes.length)return[];
-    const have=result.ingredients.map(s=>s.toLowerCase());
+    const have=result.ingredients.map(s=>s.toLowerCase().trim()).filter(s=>s.length>=3);
     return recipes.map(r=>{
       const ings=(r.ingredients||[]).map(i=>(typeof i==="string"?i:i.name||"").toLowerCase());
-      const hits=have.filter(h=>ings.some(i=>i.includes(h)||h.includes(i.split(" ")[0])));
-      return{...r,_hits:hits.length,_pct:ings.length?Math.round(hits.length/Math.min(have.length,ings.length)*100):0};
+      const hits=have.filter(h=>{
+        const re=new RegExp(`\\b${h.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}\\b`);
+        return ings.some(i=>re.test(i));
+      });
+      return{...r,_hits:hits.length};
     }).filter(r=>r._hits>0).sort((a,b)=>b._hits-a._hits).slice(0,5);
   }
 

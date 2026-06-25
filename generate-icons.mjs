@@ -5,10 +5,11 @@ const src = "C:/Users/User/Downloads/file_0000000056bc71fa9ba5247c16a806c6.png";
 const meta = await sharp(src).metadata();
 console.log(`Source: ${meta.width}x${meta.height}`);
 
-// Crop the circular logo from the centre of the source image
-const cropSize = Math.round(meta.height * 0.92);
+// Logo sits above vertical centre in the source — start crop at top=0 so extra
+// white space falls below the logo, pushing it down to appear centred.
+const cropSize = Math.round(meta.height * 0.92); // 942px square
 const left = Math.round((meta.width - cropSize) / 2);
-const top = Math.round((meta.height - cropSize) / 2);
+const top = 0; // start from very top of source
 console.log(`Cropping: ${cropSize}x${cropSize} from (${left},${top})`);
 
 const cropped = await sharp(src)
@@ -27,10 +28,9 @@ console.log("✓ icon-192.png");
 await sharp(cropped).resize(32, 32).png().toFile("public/favicon.png");
 console.log("✓ favicon.png");
 
-// Maskable icon (purpose: "maskable") — logo at 80% with dark green background padding
-// Android safe-zone requires the focal content to fit within the centre 80% circle
+// Maskable icon (purpose: "maskable") — logo fills 95% with dark green background
 const MASK_SIZE = 512;
-const LOGO_SIZE = Math.round(MASK_SIZE * 0.95); // logo occupies 95% — fills circle crop
+const LOGO_SIZE = Math.round(MASK_SIZE * 0.95);
 const pad = Math.round((MASK_SIZE - LOGO_SIZE) / 2);
 
 const logoResized = await sharp(cropped).resize(LOGO_SIZE, LOGO_SIZE).png().toBuffer();

@@ -93,19 +93,7 @@ function Chip({label,sm,onRemove}){
 
 function Logo({size=34}){
   return(
-    <svg width={size} height={size} viewBox="0 0 48 48" fill="none">
-      <defs>
-        <linearGradient id="lgbg" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stopColor="#2C4A32"/><stop offset="100%" stopColor="#1A2E1E"/></linearGradient>
-        <linearGradient id="lgsh" x1="0" y1="0" x2="0" y2="26" gradientUnits="userSpaceOnUse"><stop offset="0%" stopColor="white" stopOpacity=".2"/><stop offset="100%" stopColor="white" stopOpacity="0"/></linearGradient>
-      </defs>
-      <rect width="48" height="48" rx="14" fill="url(#lgbg)"/>
-      <rect width="48" height="26" rx="14" fill="url(#lgsh)"/>
-      {[11,15,19,23].map(x=><line key={x} x1={x} y1="9" x2={x} y2="21" stroke="#EDE8DC" strokeWidth="1.9" strokeLinecap="round"/>)}
-      <path d="M11 21 Q17 27 17 31 L17 40" stroke="#EDE8DC" strokeWidth="1.9" strokeLinecap="round"/>
-      <path d="M29 9 L36 16 L36 27 L29 27 Z" fill="#B2CEB6" opacity=".9"/>
-      <line x1="29" y1="9" x2="29" y2="40" stroke="#EDE8DC" strokeWidth="1.9" strokeLinecap="round"/>
-      <ellipse cx="24" cy="43.5" rx="4.5" ry="2.5" fill="#72A67A" opacity=".75"/>
-    </svg>
+    <img src="/icons/icon-512.png" width={size} height={size} alt="Fork n Pantry" style={{borderRadius:"50%",display:"block",objectFit:"cover"}}/>
   );
 }
 

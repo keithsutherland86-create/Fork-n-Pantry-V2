@@ -1366,12 +1366,29 @@ function SettingsTab(){
 }
 
 // ─── SCAN TAB ─────────────────────────────────────────────────────────────────
-function ScanTab(){
+function ScanTab({recipes=[],onOpenRecipe}){
   const[loading,setLoading]=useState(false);
   const[result,setResult]=useState(()=>{try{const v=localStorage.getItem("fnp_scan");return v?JSON.parse(v):null;}catch{return null;}});
   const[error,setError]=useState("");
   const[imgPreview,setImgPreview]=useState(()=>{try{return localStorage.getItem("fnp_scan_img")||null;}catch{return null;}});
   const fileRef=useRef(null);
+
+  // Score saved recipes by how many scanned ingredients they contain
+  function matchedRecipes(){
+    if(!result?.ingredients?.length||!recipes.length)return[];
+    const have=result.ingredients.map(s=>s.toLowerCase());
+    return recipes.map(r=>{
+      const ings=(r.ingredients||[]).map(i=>(typeof i==="string"?i:i.name||"").toLowerCase());
+      const hits=have.filter(h=>ings.some(i=>i.includes(h)||h.includes(i.split(" ")[0])));
+      return{...r,_hits:hits.length,_pct:ings.length?Math.round(hits.length/Math.min(have.length,ings.length)*100):0};
+    }).filter(r=>r._hits>0).sort((a,b)=>b._hits-a._hits).slice(0,5);
+  }
+
+  function searchOnline(){
+    if(!result?.ingredients?.length)return;
+    const q=encodeURIComponent("recipes with "+result.ingredients.slice(0,6).join(", "));
+    window.open("https://www.google.com/search?q="+q,"_blank","noopener");
+  }
 
   async function scan(base64,mediaType){
     setLoading(true);setError("");setResult(null);setImgPreview(null);
@@ -1466,10 +1483,34 @@ function ScanTab(){
               </div>
             )}
 
-            <div style={{display:"flex",gap:10}}>
-              <button onClick={addToGrocery} className="btn-primary" style={{flex:1,padding:"13px 0",borderRadius:"var(--r-md)",fontSize:14}}>+ Add to Grocery List</button>
+            <div style={{display:"flex",gap:10,marginBottom:24}}>
+              <button onClick={addToGrocery} className="btn-primary" style={{flex:1,padding:"13px 0",borderRadius:"var(--r-md)",fontSize:14}}>+ Add to Grocery</button>
               <button onClick={()=>{setResult(null);setImgPreview(null);setError("");try{localStorage.removeItem("fnp_scan");localStorage.removeItem("fnp_scan_img");}catch{}}} className="btn-ghost" style={{flex:1,padding:"13px 0",borderRadius:"var(--r-md)",fontSize:14}}>Scan again</button>
             </div>
+
+            {/* Saved recipe matches */}
+            {(()=>{const matches=matchedRecipes();return matches.length>0&&(
+              <div style={{marginBottom:20}}>
+                <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.07em",textTransform:"uppercase",marginBottom:10}}>Recipes you could make</div>
+                {matches.map(r=>(
+                  <button key={r.id} onClick={()=>onOpenRecipe&&onOpenRecipe(r)}
+                    style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"11px 12px",marginBottom:8,background:"var(--cream)",border:"1px solid var(--sage-lt)",borderRadius:"var(--r-md)",cursor:"pointer",textAlign:"left"}}>
+                    {r.ogImage&&<img src={r.ogImage.startsWith("http")?`/api/img?url=${encodeURIComponent(r.ogImage)}`:r.ogImage} style={{width:44,height:44,borderRadius:10,objectFit:"cover",flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,fontSize:14,color:"var(--ink)",marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.title}</div>
+                      <div style={{fontSize:12,color:"var(--moss)",fontWeight:600}}>{r._hits} ingredient{r._hits!==1?"s":""} matched</div>
+                    </div>
+                    <span style={{fontSize:18,color:"var(--sage)",flexShrink:0}}>›</span>
+                  </button>
+                ))}
+              </div>
+            );})()}
+
+            {/* Search online */}
+            <button onClick={searchOnline} className="btn-ghost"
+              style={{width:"100%",padding:"13px 0",borderRadius:"var(--r-md)",fontSize:14,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:8}}>
+              🔍 Search online for recipes
+            </button>
           </div>
         )}
       </div>
@@ -1615,6 +1656,8 @@ function AppInner(){
   const[sharedPrefill,setSharedPrefill]=useState("");
   const[backToast,setBackToast]=useState(false);
   const[showHelp,setShowHelp]=useState(false);
+  const[globalModalRecipe,setGlobalModalRecipe]=useState(null);
+  function setSelectedRecipeGlobal(r){setGlobalModalRecipe(r);}
   const lastBackRef=useRef(0);
   const searchParams=useSearchParams();
   const router=useRouter();
@@ -1658,10 +1701,11 @@ function AppInner(){
     <div style={{height:"100dvh",display:"flex",flexDirection:"column",background:"var(--linen)"}}>
       <Header count={recipes.length} onHelp={()=>setShowHelp(true)}/>
       {showHelp&&<HelpModal onClose={()=>setShowHelp(false)}/>}
+      <RecipeModal recipe={globalModalRecipe} onClose={()=>setGlobalModalRecipe(null)} onUpdate={r=>{updateRecipe(r);setGlobalModalRecipe(r);}}/>
       {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")}/>}
       {tab==="categories"&&<CategoriesTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe}/>}
       {tab==="planner"&&<PlannerTab recipes={recipes} planner={planner} setPlanner={setPlanner} onUpdate={updateRecipe}/>}
-      {tab==="scan"&&<ScanTab/>}
+      {tab==="scan"&&<ScanTab recipes={recipes} onOpenRecipe={r=>setSelectedRecipeGlobal(r)}/>}
       {tab==="grocery"&&<GroceryTab/>}
       {tab==="settings"&&<SettingsTab/>}
       <TabBar tab={tab} setTab={setTab}/>

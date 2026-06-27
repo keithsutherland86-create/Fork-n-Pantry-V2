@@ -255,7 +255,9 @@ function ScalerBar({servings,setServings,base,unit,setUnit}){
 // ─── Cook Mode ────────────────────────────────────────────────────────────────
 function CookMode({recipe,onClose}){
   const[step,setStep]=useState(0);
+  const[ingsOpen,setIngsOpen]=useState(false);
   const steps=recipe.steps||[];
+  const ings=recipe.ingredients||[];
   const total=steps.length;
   const wakeLockRef=useRef(null);
   useEffect(()=>{
@@ -264,9 +266,12 @@ function CookMode({recipe,onClose}){
   },[]);
   if(total===0)return null;
   const pct=Math.round((step/total)*100);
+  const hasStr=ings.length>0&&typeof ings[0]==="object";
   return(
     <div style={{position:"fixed",inset:0,background:"var(--forest)",zIndex:700,display:"flex",flexDirection:"column",paddingTop:"env(safe-area-inset-top)",paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
       <button onClick={onClose} style={{position:"absolute",top:"calc(env(safe-area-inset-top)+14px)",right:18,background:"rgba(255,255,255,.12)",border:"1px solid rgba(255,255,255,.2)",color:"#fff",borderRadius:"50%",width:36,height:36,fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>×</button>
+
+      {/* Title + progress */}
       <div style={{padding:"18px 60px 14px 20px",flexShrink:0}}>
         <div style={{fontSize:12,color:"rgba(255,255,255,.5)",fontWeight:600,letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:6,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{recipe.title}</div>
         <div style={{background:"rgba(255,255,255,.15)",borderRadius:4,height:4,overflow:"hidden"}}>
@@ -274,9 +279,37 @@ function CookMode({recipe,onClose}){
         </div>
         <div style={{marginTop:5,fontSize:11,color:"rgba(255,255,255,.4)"}}>{pct}% · Step {step+1} of {total}</div>
       </div>
+
+      {/* Step text */}
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 28px",textAlign:"center"}}>
         <div className="serif" style={{fontSize:26,fontWeight:500,color:"#FDFCFA",lineHeight:1.65,maxWidth:480}}>{steps[step]}</div>
       </div>
+
+      {/* Ingredients drawer */}
+      {ings.length>0&&(
+        <div style={{marginInline:16,marginBottom:12,borderRadius:"var(--r-lg)",overflow:"hidden",background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.12)",flexShrink:0}}>
+          {/* Collapsed pill — always visible */}
+          <button onClick={()=>setIngsOpen(o=>!o)}
+            style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.85)"}}>
+            <span style={{fontSize:16}}>🥗</span>
+            <span style={{flex:1,fontSize:13,fontWeight:600,textAlign:"left"}}>Ingredients</span>
+            <span style={{fontSize:12,color:"rgba(255,255,255,.45)",marginRight:4}}>{ings.length} items</span>
+            <span style={{fontSize:18,color:"rgba(255,255,255,.5)",transform:ingsOpen?"rotate(180deg)":"none",transition:"transform .2s",display:"inline-block"}}>⌄</span>
+          </button>
+          {/* Expanded list */}
+          {ingsOpen&&(
+            <div style={{maxHeight:220,overflowY:"auto",borderTop:"1px solid rgba(255,255,255,.1)",padding:"8px 14px 12px"}}>
+              {ings.map((ing,i)=>(
+                <div key={i} style={{fontSize:13,color:"rgba(255,255,255,.8)",padding:"5px 0",borderBottom:i<ings.length-1?"1px solid rgba(255,255,255,.07)":"none"}}>
+                  · {hasStr?fmtIng(ing,"original",1):(typeof ing==="string"?ing:ing.name||"")}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Nav buttons */}
       <div style={{padding:"0 24px",display:"flex",gap:14,flexShrink:0}}>
         <button onClick={()=>setStep(s=>Math.max(0,s-1))} disabled={step===0} style={{flex:1,padding:"15px 0",borderRadius:"var(--r-md)",border:"1.5px solid rgba(255,255,255,.2)",background:"transparent",color:"rgba(255,255,255,.7)",fontSize:15,fontWeight:600,cursor:step===0?"default":"pointer",opacity:step===0?0.35:1,transition:"opacity .15s",fontFamily:"var(--font-ui)"}}>← Back</button>
         {step<total-1

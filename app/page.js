@@ -1808,8 +1808,10 @@ function AppInner(){
   }
 
   async function handleSignIn(){
-    const sb=getSupabase();if(!sb)return;
-    await sb.auth.signInWithOAuth({provider:"google",options:{redirectTo:window.location.origin}});
+    const sb=getSupabase();
+    if(!sb){alert("Config error: Supabase not initialised. Check env vars in Vercel.");return;}
+    const{error}=await sb.auth.signInWithOAuth({provider:"google",options:{redirectTo:window.location.origin}});
+    if(error)alert("Sign in error: "+error.message);
   }
   async function handleSignOut(){
     const sb=getSupabase();if(!sb)return;

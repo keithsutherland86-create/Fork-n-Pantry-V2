@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { supabase } from "../lib/supabase";
+import { getSupabase } from "../lib/supabase";
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
 const KEYS = { r:"fnp_r4", c:"fnp_c3", p:"fnp_p3", g:"fnp_g1", t:"fnp_theme" };
@@ -1694,20 +1694,23 @@ function Header({count,onHelp,session}){
 
 // ─── Cloud sync helpers ────────────────────────────────────────────────────────
 async function cloudUpsert(recipe,userId){
-  await supabase.from("recipes").upsert({id:recipe.id,user_id:userId,data:recipe,updated_at:new Date().toISOString()},{onConflict:"id,user_id"});
+  const sb=getSupabase();if(!sb)return;
+  await sb.from("recipes").upsert({id:recipe.id,user_id:userId,data:recipe,updated_at:new Date().toISOString()},{onConflict:"id,user_id"});
 }
 async function cloudDelete(id,userId){
-  await supabase.from("recipes").delete().eq("id",id).eq("user_id",userId);
+  const sb=getSupabase();if(!sb)return;
+  await sb.from("recipes").delete().eq("id",id).eq("user_id",userId);
 }
 async function cloudLoad(userId){
-  const{data,error}=await supabase.from("recipes").select("data").eq("user_id",userId);
+  const sb=getSupabase();if(!sb)return null;
+  const{data,error}=await sb.from("recipes").select("data").eq("user_id",userId);
   if(error||!data)return null;
   return data.map(r=>r.data);
 }
 async function cloudUploadAll(recipes,userId){
-  if(!recipes.length)return;
+  const sb=getSupabase();if(!sb||!recipes.length)return;
   const rows=recipes.map(r=>({id:r.id,user_id:userId,data:r,updated_at:new Date().toISOString()}));
-  await supabase.from("recipes").upsert(rows,{onConflict:"id,user_id"});
+  await sb.from("recipes").upsert(rows,{onConflict:"id,user_id"});
 }
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
@@ -1741,15 +1744,18 @@ function AppInner(){
     history.pushState({page:"app"},"");
 
     // Auth: get existing session, then listen for changes
-    supabase.auth.getSession().then(({data:{session:s}})=>{
-      setSession(s);
-      if(s)syncOnLogin(s.user.id,localRecipes);
-    });
-    const{data:{subscription}}=supabase.auth.onAuthStateChange((_event,s)=>{
-      setSession(s);
-      if(s){syncOnLogin(s.user.id,load(KEYS.r));}
-    });
-    return()=>subscription.unsubscribe();
+    const sb=getSupabase();
+    if(sb){
+      sb.auth.getSession().then(({data:{session:s}})=>{
+        setSession(s);
+        if(s)syncOnLogin(s.user.id,localRecipes);
+      });
+      const{data:{subscription}}=sb.auth.onAuthStateChange((_event,s)=>{
+        setSession(s);
+        if(s){syncOnLogin(s.user.id,load(KEYS.r));}
+      });
+      return()=>subscription.unsubscribe();
+    }
   },[]);
 
   async function syncOnLogin(userId,localRecipes){
@@ -1802,15 +1808,13 @@ function AppInner(){
   }
 
   async function handleSignIn(){
-    await supabase.auth.signInWithOAuth({
-      provider:"google",
-      options:{redirectTo:window.location.origin}
-    });
+    const sb=getSupabase();if(!sb)return;
+    await sb.auth.signInWithOAuth({provider:"google",options:{redirectTo:window.location.origin}});
   }
   async function handleSignOut(){
-    await supabase.auth.signOut();
-    setSession(null);
-    setSyncStatus("idle");
+    const sb=getSupabase();if(!sb)return;
+    await sb.auth.signOut();
+    setSession(null);setSyncStatus("idle");
   }
 
   return(

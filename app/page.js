@@ -275,11 +275,6 @@ const COOK_EMOJIS=[
   {words:["drain","strain","sieve","sift"],emoji:"🫙"},
   {words:["taste","check","adjust"],emoji:"🤌"},
 ];
-const EMOJI_POSITIONS=[
-  {top:"12%",left:"8%"},{top:"15%",right:"10%"},
-  {top:"45%",left:"4%"},{top:"42%",right:"5%"},
-  {bottom:"30%",left:"10%"},{bottom:"28%",right:"8%"},
-];
 function getStepEmojis(text){
   if(!text)return[];
   const lower=text.toLowerCase();
@@ -306,12 +301,14 @@ function CookMode({recipe,onClose}){
   return(
     <div style={{position:"fixed",inset:0,background:"#0A1A10",zIndex:700,display:"flex",flexDirection:"column",paddingTop:"env(safe-area-inset-top)",paddingBottom:"calc(24px + env(safe-area-inset-bottom)",overflow:"hidden"}}>
 
-      {/* Background emojis */}
-      {stepEmojis.map((em,i)=>(
-        <div key={`${step}-${i}`} style={{position:"absolute",fontSize:120,opacity:0.07,userSelect:"none",pointerEvents:"none",lineHeight:1,transition:"opacity .6s",zIndex:0,...EMOJI_POSITIONS[i]}}>
-          {em}
-        </div>
-      ))}
+      {/* Background emojis — centered column, evenly spaced */}
+      <div style={{position:"absolute",inset:0,zIndex:0,pointerEvents:"none",userSelect:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-evenly",padding:"60px 0"}}>
+        {stepEmojis.map((em,i)=>(
+          <div key={`${step}-${i}`} style={{fontSize:140,opacity:0.13,lineHeight:1,transition:"opacity .5s"}}>
+            {em}
+          </div>
+        ))}
+      </div>
 
       <button onClick={onClose} style={{position:"absolute",top:"calc(env(safe-area-inset-top)+14px)",right:18,background:"rgba(255,255,255,.15)",border:"1px solid rgba(255,255,255,.25)",color:"#fff",borderRadius:"50%",width:36,height:36,fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>×</button>
 

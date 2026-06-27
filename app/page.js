@@ -301,14 +301,21 @@ function CookMode({recipe,onClose}){
   return(
     <div style={{position:"fixed",inset:0,background:"#0A1A10",zIndex:700,display:"flex",flexDirection:"column",paddingTop:"env(safe-area-inset-top)",paddingBottom:"calc(24px + env(safe-area-inset-bottom)",overflow:"hidden"}}>
 
-      {/* Background emojis — centered column, evenly spaced */}
-      <div style={{position:"absolute",inset:0,zIndex:0,pointerEvents:"none",userSelect:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-evenly",padding:"60px 0"}}>
-        {stepEmojis.map((em,i)=>(
-          <div key={`${step}-${i}`} style={{fontSize:140,opacity:0.13,lineHeight:1,transition:"opacity .5s"}}>
-            {em}
+      {/* Background emojis — top and bottom bands, avoiding centre text */}
+      {stepEmojis.length>0&&(
+        <div style={{position:"absolute",inset:0,zIndex:0,pointerEvents:"none",userSelect:"none"}}>
+          <div style={{position:"absolute",top:"6%",left:0,right:0,display:"flex",justifyContent:"space-evenly",alignItems:"center"}}>
+            {stepEmojis.slice(0,Math.ceil(stepEmojis.length/2)).map((em,i)=>(
+              <div key={`t${step}${i}`} style={{fontSize:130,opacity:0.13,lineHeight:1}}>{em}</div>
+            ))}
           </div>
-        ))}
-      </div>
+          <div style={{position:"absolute",bottom:"22%",left:0,right:0,display:"flex",justifyContent:"space-evenly",alignItems:"center"}}>
+            {stepEmojis.slice(Math.ceil(stepEmojis.length/2)).map((em,i)=>(
+              <div key={`b${step}${i}`} style={{fontSize:130,opacity:0.13,lineHeight:1}}>{em}</div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <button onClick={onClose} style={{position:"absolute",top:"calc(env(safe-area-inset-top)+14px)",right:18,background:"rgba(255,255,255,.15)",border:"1px solid rgba(255,255,255,.25)",color:"#fff",borderRadius:"50%",width:36,height:36,fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>×</button>
 

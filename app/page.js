@@ -253,6 +253,40 @@ function ScalerBar({servings,setServings,base,unit,setUnit}){
 }
 
 // ─── Cook Mode ────────────────────────────────────────────────────────────────
+const COOK_EMOJIS=[
+  {words:["blend","blender","blitz","puree","purée"],emoji:"🫙"},
+  {words:["chop","dice","cut","slice","mince","julienne","halve"],emoji:"🔪"},
+  {words:["whisk","beat","whip"],emoji:"🥄"},
+  {words:["stir","mix","combine","fold","toss"],emoji:"🥣"},
+  {words:["bake","oven","roast"],emoji:"🔥"},
+  {words:["boil","simmer","poach","blanch"],emoji:"♨️"},
+  {words:["fry","sauté","saute","sear","pan"],emoji:"🍳"},
+  {words:["grill","barbecue","bbq","char"],emoji:"🔥"},
+  {words:["pour","drizzle","add","sprinkle"],emoji:"🫗"},
+  {words:["season","salt","pepper","spice"],emoji:"🧂"},
+  {words:["wash","rinse","clean"],emoji:"💧"},
+  {words:["cool","rest","chill","refrigerate","freeze"],emoji:"❄️"},
+  {words:["serve","plate","garnish","dish"],emoji:"🍽️"},
+  {words:["squeeze","zest","juice"],emoji:"🍋"},
+  {words:["peel","trim","scrub"],emoji:"🥕"},
+  {words:["knead","roll","flatten","press"],emoji:"🫓"},
+  {words:["marinate","soak","steep"],emoji:"🫙"},
+  {words:["grate","shred","crumble"],emoji:"🧀"},
+  {words:["drain","strain","sieve","sift"],emoji:"🫙"},
+  {words:["taste","check","adjust"],emoji:"🤌"},
+];
+const EMOJI_POSITIONS=[
+  {top:"12%",left:"8%"},{top:"15%",right:"10%"},
+  {top:"45%",left:"4%"},{top:"42%",right:"5%"},
+  {bottom:"30%",left:"10%"},{bottom:"28%",right:"8%"},
+];
+function getStepEmojis(text){
+  if(!text)return[];
+  const lower=text.toLowerCase();
+  const found=COOK_EMOJIS.filter(e=>e.words.some(w=>new RegExp(`\\b${w}`).test(lower))).map(e=>e.emoji);
+  return[...new Set(found)].slice(0,3);
+}
+
 function CookMode({recipe,onClose}){
   const[step,setStep]=useState(0);
   const[ingsOpen,setIngsOpen]=useState(false);
@@ -267,40 +301,48 @@ function CookMode({recipe,onClose}){
   if(total===0)return null;
   const pct=Math.round((step/total)*100);
   const hasStr=ings.length>0&&typeof ings[0]==="object";
+  const stepEmojis=getStepEmojis(steps[step]);
+
   return(
-    <div style={{position:"fixed",inset:0,background:"var(--forest)",zIndex:700,display:"flex",flexDirection:"column",paddingTop:"env(safe-area-inset-top)",paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
-      <button onClick={onClose} style={{position:"absolute",top:"calc(env(safe-area-inset-top)+14px)",right:18,background:"rgba(255,255,255,.12)",border:"1px solid rgba(255,255,255,.2)",color:"#fff",borderRadius:"50%",width:36,height:36,fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>×</button>
+    <div style={{position:"fixed",inset:0,background:"#0A1A10",zIndex:700,display:"flex",flexDirection:"column",paddingTop:"env(safe-area-inset-top)",paddingBottom:"calc(24px + env(safe-area-inset-bottom)",overflow:"hidden"}}>
+
+      {/* Background emojis */}
+      {stepEmojis.map((em,i)=>(
+        <div key={`${step}-${i}`} style={{position:"absolute",fontSize:120,opacity:0.07,userSelect:"none",pointerEvents:"none",lineHeight:1,transition:"opacity .6s",zIndex:0,...EMOJI_POSITIONS[i]}}>
+          {em}
+        </div>
+      ))}
+
+      <button onClick={onClose} style={{position:"absolute",top:"calc(env(safe-area-inset-top)+14px)",right:18,background:"rgba(255,255,255,.15)",border:"1px solid rgba(255,255,255,.25)",color:"#fff",borderRadius:"50%",width:36,height:36,fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>×</button>
 
       {/* Title + progress */}
-      <div style={{padding:"18px 60px 14px 20px",flexShrink:0}}>
-        <div style={{fontSize:12,color:"rgba(255,255,255,.5)",fontWeight:600,letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:6,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{recipe.title}</div>
-        <div style={{background:"rgba(255,255,255,.15)",borderRadius:4,height:4,overflow:"hidden"}}>
-          <div style={{height:"100%",width:`${pct}%`,background:"linear-gradient(90deg,var(--mint),var(--sage))",borderRadius:4,transition:"width .4s"}}/>
+      <div style={{padding:"18px 60px 14px 20px",flexShrink:0,position:"relative",zIndex:1}}>
+        <div style={{fontSize:12,color:"rgba(255,255,255,.55)",fontWeight:600,letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:6,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{recipe.title}</div>
+        <div style={{background:"rgba(255,255,255,.18)",borderRadius:4,height:5,overflow:"hidden"}}>
+          <div style={{height:"100%",width:`${pct}%`,background:"linear-gradient(90deg,#7AB89A,#4ADE80)",borderRadius:4,transition:"width .4s"}}/>
         </div>
-        <div style={{marginTop:5,fontSize:11,color:"rgba(255,255,255,.4)"}}>{pct}% · Step {step+1} of {total}</div>
+        <div style={{marginTop:5,fontSize:11,color:"rgba(255,255,255,.45)"}}>{pct}% · Step {step+1} of {total}</div>
       </div>
 
       {/* Step text */}
-      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 28px",textAlign:"center"}}>
-        <div className="serif" style={{fontSize:26,fontWeight:500,color:"#FDFCFA",lineHeight:1.65,maxWidth:480}}>{steps[step]}</div>
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 32px",textAlign:"center",position:"relative",zIndex:1}}>
+        <div className="serif" style={{fontSize:28,fontWeight:600,color:"#FFFFFF",lineHeight:1.6,maxWidth:480,textShadow:"0 2px 16px rgba(0,0,0,.6)"}}>{steps[step]}</div>
       </div>
 
       {/* Ingredients drawer */}
       {ings.length>0&&(
-        <div style={{marginInline:16,marginBottom:12,borderRadius:"var(--r-lg)",overflow:"hidden",background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.12)",flexShrink:0}}>
-          {/* Collapsed pill — always visible */}
+        <div style={{marginInline:16,marginBottom:12,borderRadius:"var(--r-lg)",overflow:"hidden",background:"rgba(255,255,255,.1)",border:"1px solid rgba(255,255,255,.18)",flexShrink:0,position:"relative",zIndex:1}}>
           <button onClick={()=>setIngsOpen(o=>!o)}
-            style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.85)"}}>
+            style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fff"}}>
             <span style={{fontSize:16}}>🥗</span>
-            <span style={{flex:1,fontSize:13,fontWeight:600,textAlign:"left"}}>Ingredients</span>
-            <span style={{fontSize:12,color:"rgba(255,255,255,.45)",marginRight:4}}>{ings.length} items</span>
-            <span style={{fontSize:18,color:"rgba(255,255,255,.5)",transform:ingsOpen?"rotate(180deg)":"none",transition:"transform .2s",display:"inline-block"}}>⌄</span>
+            <span style={{flex:1,fontSize:13,fontWeight:700,textAlign:"left"}}>Ingredients</span>
+            <span style={{fontSize:12,color:"rgba(255,255,255,.5)",marginRight:4}}>{ings.length} items</span>
+            <span style={{fontSize:18,color:"rgba(255,255,255,.6)",transform:ingsOpen?"rotate(180deg)":"none",transition:"transform .2s",display:"inline-block"}}>⌄</span>
           </button>
-          {/* Expanded list */}
           {ingsOpen&&(
-            <div style={{maxHeight:220,overflowY:"auto",borderTop:"1px solid rgba(255,255,255,.1)",padding:"8px 14px 12px"}}>
+            <div style={{maxHeight:220,overflowY:"auto",borderTop:"1px solid rgba(255,255,255,.12)",padding:"8px 14px 12px"}}>
               {ings.map((ing,i)=>(
-                <div key={i} style={{fontSize:13,color:"rgba(255,255,255,.8)",padding:"5px 0",borderBottom:i<ings.length-1?"1px solid rgba(255,255,255,.07)":"none"}}>
+                <div key={i} style={{fontSize:14,color:"rgba(255,255,255,.9)",padding:"6px 0",borderBottom:i<ings.length-1?"1px solid rgba(255,255,255,.08)":"none"}}>
                   · {hasStr?fmtIng(ing,"original",1):(typeof ing==="string"?ing:ing.name||"")}
                 </div>
               ))}
@@ -310,11 +352,11 @@ function CookMode({recipe,onClose}){
       )}
 
       {/* Nav buttons */}
-      <div style={{padding:"0 24px",display:"flex",gap:14,flexShrink:0}}>
-        <button onClick={()=>setStep(s=>Math.max(0,s-1))} disabled={step===0} style={{flex:1,padding:"15px 0",borderRadius:"var(--r-md)",border:"1.5px solid rgba(255,255,255,.2)",background:"transparent",color:"rgba(255,255,255,.7)",fontSize:15,fontWeight:600,cursor:step===0?"default":"pointer",opacity:step===0?0.35:1,transition:"opacity .15s",fontFamily:"var(--font-ui)"}}>← Back</button>
+      <div style={{padding:"0 24px",display:"flex",gap:14,flexShrink:0,position:"relative",zIndex:1}}>
+        <button onClick={()=>setStep(s=>Math.max(0,s-1))} disabled={step===0} style={{flex:1,padding:"15px 0",borderRadius:"var(--r-md)",border:"1.5px solid rgba(255,255,255,.25)",background:"rgba(255,255,255,.08)",color:"#fff",fontSize:15,fontWeight:600,cursor:step===0?"default":"pointer",opacity:step===0?0.3:1,transition:"opacity .15s",fontFamily:"var(--font-ui)"}}>← Back</button>
         {step<total-1
-          ?<button onClick={()=>setStep(s=>s+1)} style={{flex:2,padding:"15px 0",borderRadius:"var(--r-md)",border:"none",background:"linear-gradient(160deg,var(--pine),var(--forest))",color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 16px rgba(26,48,40,0.4)",fontFamily:"var(--font-ui)"}}>Next Step →</button>
-          :<button onClick={onClose} style={{flex:2,padding:"15px 0",borderRadius:"var(--r-md)",border:"none",background:"linear-gradient(160deg,var(--mint),var(--sage))",color:"var(--forest)",fontSize:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 16px rgba(74,184,154,0.3)",fontFamily:"var(--font-ui)"}}>Done! 🎉</button>
+          ?<button onClick={()=>setStep(s=>s+1)} style={{flex:2,padding:"15px 0",borderRadius:"var(--r-md)",border:"none",background:"linear-gradient(160deg,#3A6B50,#1E3828)",color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(0,0,0,.4)",fontFamily:"var(--font-ui)"}}>Next Step →</button>
+          :<button onClick={onClose} style={{flex:2,padding:"15px 0",borderRadius:"var(--r-md)",border:"none",background:"linear-gradient(160deg,#7AB89A,#4A9A72)",color:"#0A1A10",fontSize:15,fontWeight:800,cursor:"pointer",boxShadow:"0 4px 20px rgba(74,222,128,.25)",fontFamily:"var(--font-ui)"}}>Done! 🎉</button>
         }
       </div>
     </div>

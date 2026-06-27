@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { supabase } from "../lib/supabase";
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
 const KEYS = { r:"fnp_r4", c:"fnp_c3", p:"fnp_p3", g:"fnp_g1", t:"fnp_theme" };
@@ -1296,25 +1297,75 @@ function GroceryTab(){
 }
 
 // ─── SETTINGS TAB ─────────────────────────────────────────────────────────────
-function SettingsTab(){
+function SettingsTab({session,onSignIn,onSignOut,syncStatus}){
   const[dark,setDark]=useState(()=>{try{return localStorage.getItem(KEYS.t)==="dark";}catch{return false;}});
+  const[signingIn,setSigningIn]=useState(false);
 
   function toggleDark(){
-    const next=!dark;
-    setDark(next);
+    const next=!dark;setDark(next);
     try{
       if(next){localStorage.setItem(KEYS.t,"dark");document.documentElement.setAttribute("data-theme","dark");}
       else{localStorage.removeItem(KEYS.t);document.documentElement.removeAttribute("data-theme");}
     }catch{}
   }
 
+  async function handleSignIn(){
+    setSigningIn(true);
+    await onSignIn();
+    setSigningIn(false);
+  }
+
+  const user=session?.user;
   const row={display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 0",borderBottom:"1px solid var(--sage-pale)"};
   const label={fontSize:14,fontWeight:600,color:"var(--ink)"};
   const sub={fontSize:12,color:"var(--mist)",marginTop:2};
+  const googleIcon=(
+    <svg width="18" height="18" viewBox="0 0 24 24">
+      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+    </svg>
+  );
 
   return(
     <div style={{flex:1,overflowY:"auto",paddingBottom:90}}>
       <div style={{padding:"14px 18px 0"}}>
+
+        {/* Account */}
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4,paddingBottom:6,borderBottom:"1.5px solid var(--parchment)"}}>Account</div>
+          {user?(
+            <>
+              <div style={{display:"flex",alignItems:"center",gap:14,padding:"16px 0",borderBottom:"1px solid var(--sage-pale)"}}>
+                {user.user_metadata?.avatar_url
+                  ?<img src={user.user_metadata.avatar_url} style={{width:48,height:48,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>
+                  :<div style={{width:48,height:48,borderRadius:"50%",background:"var(--sage)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:20,fontWeight:700,flexShrink:0}}>{(user.user_metadata?.full_name||user.email||"?")[0].toUpperCase()}</div>
+                }
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:15,color:"var(--ink)",marginBottom:2}}>{user.user_metadata?.full_name||"Account"}</div>
+                  <div style={{fontSize:13,color:"var(--mist)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.email}</div>
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,padding:"10px 0",borderBottom:"1px solid var(--sage-pale)"}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:syncStatus==="synced"?"#4ADE80":syncStatus==="syncing"?"#FBBF24":"#94A3B8",flexShrink:0}}/>
+                <span style={{fontSize:13,color:"var(--mist)"}}>{syncStatus==="synced"?"Recipes synced to cloud":syncStatus==="syncing"?"Syncing…":"Not synced"}</span>
+              </div>
+              <div style={{marginTop:14}}>
+                <button onClick={onSignOut} className="btn-ghost" style={{width:"100%",padding:"12px 0",borderRadius:"var(--r-md)",fontSize:14,fontWeight:600,color:"var(--rose)"}}>Sign out</button>
+              </div>
+            </>
+          ):(
+            <>
+              <div style={{padding:"16px 0 14px",fontSize:13,color:"var(--charcoal)",lineHeight:1.6}}>Sign in to sync your recipes across all your devices and back them up to the cloud.</div>
+              <button onClick={handleSignIn} disabled={signingIn} className="btn-ghost"
+                style={{width:"100%",padding:"13px 0",borderRadius:"var(--r-md)",border:"1.5px solid var(--sage-lt)",fontSize:14,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,cursor:signingIn?"wait":"pointer",opacity:signingIn?0.7:1}}>
+                {googleIcon}
+                {signingIn?"Redirecting to Google…":"Sign in with Google"}
+              </button>
+            </>
+          )}
+        </div>
 
         {/* Appearance */}
         <div style={{marginBottom:20}}>
@@ -1326,23 +1377,6 @@ function SettingsTab(){
             </div>
             <button onClick={toggleDark} style={{width:48,height:26,borderRadius:13,border:"none",cursor:"pointer",background:dark?"var(--moss)":"var(--mist)",position:"relative",transition:"background .2s",flexShrink:0}}>
               <div style={{position:"absolute",top:3,left:dark?24:3,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,.2)"}}/>
-            </button>
-          </div>
-        </div>
-
-        {/* Account */}
-        <div style={{marginBottom:20}}>
-          <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4,paddingBottom:6,borderBottom:"1.5px solid var(--parchment)"}}>Account</div>
-          {[["Display Name","Your name"],["Email","you@example.com"]].map(([l,ph])=>(
-            <div key={l} style={row}>
-              <div style={label}>{l}</div>
-              <span style={{fontSize:13,color:"var(--mist)"}}>{ph}</span>
-            </div>
-          ))}
-          <div style={{marginTop:12}}>
-            <button disabled style={{width:"100%",padding:"12px 0",borderRadius:"var(--r-md)",border:"1.5px solid var(--sage-lt)",background:"var(--sage-pale)",color:"var(--mist)",fontSize:14,fontWeight:700,cursor:"not-allowed",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              <svg width="18" height="18" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#9CA3AF"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#9CA3AF"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#9CA3AF"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#9CA3AF"/></svg>
-              Sign in with Google — Coming soon
             </button>
           </div>
         </div>
@@ -1633,7 +1667,9 @@ function HelpModal({onClose}){
 }
 
 // ─── Header ───────────────────────────────────────────────────────────────────
-function Header({count,onHelp}){
+function Header({count,onHelp,session}){
+  const avatar=session?.user?.user_metadata?.avatar_url;
+  const initial=(session?.user?.user_metadata?.full_name||session?.user?.email||"")[0]?.toUpperCase();
   return(
     <div style={{background:"linear-gradient(160deg,#1E3828 0%,#152A20 60%,#0F1F17 100%)",paddingTop:"env(safe-area-inset-top)",flexShrink:0,boxShadow:"0 1px 0 rgba(255,255,255,.06),0 4px 24px rgba(10,20,14,.35)"}}>
       <div style={{padding:"14px 18px 15px",display:"flex",alignItems:"center",gap:12}}>
@@ -1645,10 +1681,33 @@ function Header({count,onHelp}){
           </div>
         </div>
         <button onClick={onHelp} style={{width:30,height:30,borderRadius:"50%",background:"rgba(255,255,255,.12)",border:"1px solid rgba(255,255,255,.2)",color:"rgba(255,255,255,.85)",fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</button>
-        <div style={{width:8,height:8,borderRadius:"50%",background:"#4ADE80",boxShadow:"0 0 8px rgba(74,222,128,.6)",flexShrink:0}}/>
+        {session
+          ?(avatar
+            ?<img src={avatar} style={{width:28,height:28,borderRadius:"50%",objectFit:"cover",flexShrink:0,border:"2px solid rgba(74,222,128,.5)"}}/>
+            :<div style={{width:28,height:28,borderRadius:"50%",background:"var(--sage)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,fontWeight:700,flexShrink:0,border:"2px solid rgba(74,222,128,.5)"}}>{initial}</div>)
+          :<div style={{width:8,height:8,borderRadius:"50%",background:"rgba(255,255,255,.2)",flexShrink:0}}/>
+        }
       </div>
     </div>
   );
+}
+
+// ─── Cloud sync helpers ────────────────────────────────────────────────────────
+async function cloudUpsert(recipe,userId){
+  await supabase.from("recipes").upsert({id:recipe.id,user_id:userId,data:recipe,updated_at:new Date().toISOString()},{onConflict:"id,user_id"});
+}
+async function cloudDelete(id,userId){
+  await supabase.from("recipes").delete().eq("id",id).eq("user_id",userId);
+}
+async function cloudLoad(userId){
+  const{data,error}=await supabase.from("recipes").select("data").eq("user_id",userId);
+  if(error||!data)return null;
+  return data.map(r=>r.data);
+}
+async function cloudUploadAll(recipes,userId){
+  if(!recipes.length)return;
+  const rows=recipes.map(r=>({id:r.id,user_id:userId,data:r,updated_at:new Date().toISOString()}));
+  await supabase.from("recipes").upsert(rows,{onConflict:"id,user_id"});
 }
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
@@ -1661,28 +1720,60 @@ function AppInner(){
   const[backToast,setBackToast]=useState(false);
   const[showHelp,setShowHelp]=useState(false);
   const[globalModalRecipe,setGlobalModalRecipe]=useState(null);
+  const[session,setSession]=useState(null);
+  const[syncStatus,setSyncStatus]=useState("idle"); // idle | syncing | synced
   function setSelectedRecipeGlobal(r){setGlobalModalRecipe(r);}
   const lastBackRef=useRef(0);
   const searchParams=useSearchParams();
   const router=useRouter();
 
+  // Load local data on mount, then check auth session
   useEffect(()=>{
-    setRecipes(load(KEYS.r));
+    const localRecipes=load(KEYS.r);
+    setRecipes(localRecipes);
     setCategories(load(KEYS.c));
     const p=localStorage.getItem(KEYS.p);
     try{const parsed=JSON.parse(p||"{}");setPlanner(Array.isArray(parsed)?{}:parsed);}catch{setPlanner({});}
     if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
     const shared=searchParams.get("shared");
     if(shared){setSharedPrefill(decodeURIComponent(shared));setTab("recipes");router.replace("/");}
-    // Apply saved theme
     try{const t=localStorage.getItem(KEYS.t);if(t==="dark")document.documentElement.setAttribute("data-theme","dark");}catch{}
-    // Push initial history state for back-button interception
     history.pushState({page:"app"},"");
+
+    // Auth: get existing session, then listen for changes
+    supabase.auth.getSession().then(({data:{session:s}})=>{
+      setSession(s);
+      if(s)syncOnLogin(s.user.id,localRecipes);
+    });
+    const{data:{subscription}}=supabase.auth.onAuthStateChange((_event,s)=>{
+      setSession(s);
+      if(s){syncOnLogin(s.user.id,load(KEYS.r));}
+    });
+    return()=>subscription.unsubscribe();
   },[]);
+
+  async function syncOnLogin(userId,localRecipes){
+    setSyncStatus("syncing");
+    const cloud=await cloudLoad(userId);
+    if(cloud===null){setSyncStatus("idle");return;}
+    if(cloud.length===0&&localRecipes.length>0){
+      // First login — upload local recipes to cloud
+      await cloudUploadAll(localRecipes,userId);
+      setSyncStatus("synced");
+    } else {
+      // Merge: cloud is source of truth; add any local-only recipes
+      const cloudIds=new Set(cloud.map(r=>r.id));
+      const localOnly=localRecipes.filter(r=>!cloudIds.has(r.id));
+      const merged=[...cloud,...localOnly];
+      if(localOnly.length>0)await cloudUploadAll(localOnly,userId);
+      setRecipes(merged);
+      save(KEYS.r,merged);
+      setSyncStatus("synced");
+    }
+  }
 
   useEffect(()=>{
     function onPop(){
-      // Close recipe modal first if one is open
       if(_closeModal){_closeModal();_closeModal=null;history.pushState({page:"app"},"");return;}
       const now=Date.now();
       const timeSinceLast=now-lastBackRef.current;
@@ -1697,13 +1788,34 @@ function AppInner(){
     return()=>window.removeEventListener("popstate",onPop);
   },[tab]);
 
-  function addRecipe(r){const u=[r,...recipes];setRecipes(u);save(KEYS.r,u);}
-  function deleteRecipe(id){const u=recipes.filter(r=>r.id!==id);setRecipes(u);save(KEYS.r,u);}
-  function updateRecipe(r){const u=recipes.map(x=>x.id===r.id?r:x);setRecipes(u);save(KEYS.r,u);}
+  function addRecipe(r){
+    const u=[r,...recipes];setRecipes(u);save(KEYS.r,u);
+    if(session)cloudUpsert(r,session.user.id).then(()=>setSyncStatus("synced"));
+  }
+  function deleteRecipe(id){
+    const u=recipes.filter(r=>r.id!==id);setRecipes(u);save(KEYS.r,u);
+    if(session)cloudDelete(id,session.user.id);
+  }
+  function updateRecipe(r){
+    const u=recipes.map(x=>x.id===r.id?r:x);setRecipes(u);save(KEYS.r,u);
+    if(session)cloudUpsert(r,session.user.id).then(()=>setSyncStatus("synced"));
+  }
+
+  async function handleSignIn(){
+    await supabase.auth.signInWithOAuth({
+      provider:"google",
+      options:{redirectTo:window.location.origin}
+    });
+  }
+  async function handleSignOut(){
+    await supabase.auth.signOut();
+    setSession(null);
+    setSyncStatus("idle");
+  }
 
   return(
     <div style={{height:"100dvh",display:"flex",flexDirection:"column",background:"var(--linen)"}}>
-      <Header count={recipes.length} onHelp={()=>setShowHelp(true)}/>
+      <Header count={recipes.length} onHelp={()=>setShowHelp(true)} session={session}/>
       {showHelp&&<HelpModal onClose={()=>setShowHelp(false)}/>}
       <RecipeModal recipe={globalModalRecipe} onClose={()=>setGlobalModalRecipe(null)} onUpdate={r=>{updateRecipe(r);setGlobalModalRecipe(r);}}/>
       {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")}/>}
@@ -1711,7 +1823,7 @@ function AppInner(){
       {tab==="planner"&&<PlannerTab recipes={recipes} planner={planner} setPlanner={setPlanner} onUpdate={updateRecipe}/>}
       {tab==="scan"&&<ScanTab recipes={recipes} onOpenRecipe={r=>setSelectedRecipeGlobal(r)}/>}
       {tab==="grocery"&&<GroceryTab/>}
-      {tab==="settings"&&<SettingsTab/>}
+      {tab==="settings"&&<SettingsTab session={session} onSignIn={handleSignIn} onSignOut={handleSignOut} syncStatus={syncStatus}/>}
       <TabBar tab={tab} setTab={setTab}/>
       {backToast&&(
         <div style={{position:"fixed",bottom:90,left:"50%",transform:"translateX(-50%)",background:"rgba(15,24,17,.88)",color:"#fff",borderRadius:24,padding:"10px 20px",fontSize:13,fontWeight:600,zIndex:500,pointerEvents:"none",backdropFilter:"blur(8px)",whiteSpace:"nowrap",boxShadow:"0 4px 16px rgba(0,0,0,.3)"}}>

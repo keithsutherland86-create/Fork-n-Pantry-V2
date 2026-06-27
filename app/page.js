@@ -1666,8 +1666,39 @@ function HelpModal({onClose}){
   );
 }
 
+// ─── Welcome screen ───────────────────────────────────────────────────────────
+function WelcomeScreen({onSignIn,onContinue}){
+  const[busy,setBusy]=useState(false);
+  async function handleSignIn(){setBusy(true);await onSignIn();setBusy(false);}
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:900,background:"linear-gradient(160deg,#1E3828 0%,#0F1F17 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 28px",paddingTop:"calc(32px + env(safe-area-inset-top))"}}>
+      <img src="/icons/icon-512.png" style={{width:110,height:110,borderRadius:"50%",objectFit:"cover",marginBottom:24,boxShadow:"0 8px 40px rgba(0,0,0,.4)"}}/>
+      <div className="serif" style={{fontSize:32,fontWeight:600,color:"#F5F2EC",letterSpacing:"-0.02em",marginBottom:6}}>Fork n Pantry</div>
+      <div style={{fontSize:14,color:"rgba(122,184,154,.85)",marginBottom:48,textAlign:"center",lineHeight:1.6}}>Your personal recipe collection.{"\n"}Save, plan and cook from any device.</div>
+
+      <div style={{width:"100%",maxWidth:360,display:"flex",flexDirection:"column",gap:14}}>
+        <button onClick={handleSignIn} disabled={busy}
+          style={{width:"100%",padding:"15px 0",borderRadius:"var(--r-lg)",border:"none",background:"#fff",color:"#1a1a1a",fontSize:15,fontWeight:700,cursor:busy?"wait":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:12,opacity:busy?0.7:1,boxShadow:"0 4px 20px rgba(0,0,0,.25)"}}>
+          <svg width="20" height="20" viewBox="0 0 24 24">
+            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+          </svg>
+          {busy?"Redirecting…":"Continue with Google"}
+        </button>
+        <button onClick={onContinue}
+          style={{width:"100%",padding:"14px 0",borderRadius:"var(--r-lg)",border:"1.5px solid rgba(255,255,255,.2)",background:"transparent",color:"rgba(255,255,255,.75)",fontSize:14,fontWeight:600,cursor:"pointer"}}>
+          Continue without account
+        </button>
+        <div style={{fontSize:12,color:"rgba(255,255,255,.35)",textAlign:"center",marginTop:4,lineHeight:1.6}}>Sign in to sync recipes across all your devices.</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Header ───────────────────────────────────────────────────────────────────
-function Header({count,onHelp,session}){
+function Header({count,onHelp,session,onAccountPress}){
   const avatar=session?.user?.user_metadata?.avatar_url;
   const initial=(session?.user?.user_metadata?.full_name||session?.user?.email||"")[0]?.toUpperCase();
   return(
@@ -1681,12 +1712,16 @@ function Header({count,onHelp,session}){
           </div>
         </div>
         <button onClick={onHelp} style={{width:30,height:30,borderRadius:"50%",background:"rgba(255,255,255,.12)",border:"1px solid rgba(255,255,255,.2)",color:"rgba(255,255,255,.85)",fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</button>
-        {session
-          ?(avatar
-            ?<img src={avatar} style={{width:28,height:28,borderRadius:"50%",objectFit:"cover",flexShrink:0,border:"2px solid rgba(74,222,128,.5)"}}/>
-            :<div style={{width:28,height:28,borderRadius:"50%",background:"var(--sage)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,fontWeight:700,flexShrink:0,border:"2px solid rgba(74,222,128,.5)"}}>{initial}</div>)
-          :<div style={{width:8,height:8,borderRadius:"50%",background:"rgba(255,255,255,.2)",flexShrink:0}}/>
-        }
+        <button onClick={onAccountPress} style={{background:"none",border:"none",padding:0,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center"}}>
+          {session
+            ?(avatar
+              ?<img src={avatar} style={{width:30,height:30,borderRadius:"50%",objectFit:"cover",border:"2px solid rgba(74,222,128,.6)"}}/>
+              :<div style={{width:30,height:30,borderRadius:"50%",background:"var(--sage)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:13,fontWeight:700,border:"2px solid rgba(74,222,128,.6)"}}>{initial}</div>)
+            :<div style={{width:30,height:30,borderRadius:"50%",background:"rgba(255,255,255,.12)",border:"1.5px solid rgba(255,255,255,.25)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="rgba(255,255,255,.7)" strokeWidth="1.8"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="rgba(255,255,255,.7)" strokeWidth="1.8" strokeLinecap="round"/></svg>
+              </div>
+          }
+        </button>
       </div>
     </div>
   );
@@ -1724,7 +1759,8 @@ function AppInner(){
   const[showHelp,setShowHelp]=useState(false);
   const[globalModalRecipe,setGlobalModalRecipe]=useState(null);
   const[session,setSession]=useState(null);
-  const[syncStatus,setSyncStatus]=useState("idle"); // idle | syncing | synced
+  const[syncStatus,setSyncStatus]=useState("idle");
+  const[welcomed,setWelcomed]=useState(true); // true = skip screen until we check storage
   function setSelectedRecipeGlobal(r){setGlobalModalRecipe(r);}
   const lastBackRef=useRef(0);
   const searchParams=useSearchParams();
@@ -1741,6 +1777,9 @@ function AppInner(){
     const shared=searchParams.get("shared");
     if(shared){setSharedPrefill(decodeURIComponent(shared));setTab("recipes");router.replace("/");}
     try{const t=localStorage.getItem(KEYS.t);if(t==="dark")document.documentElement.setAttribute("data-theme","dark");}catch{}
+    // Show welcome screen on first ever open
+    const seen=localStorage.getItem("fnp_welcomed");
+    if(!seen)setWelcomed(false);
     history.pushState({page:"app"},"");
 
     // Auth: get existing session, then listen for changes
@@ -1807,9 +1846,15 @@ function AppInner(){
     if(session)cloudUpsert(r,session.user.id).then(()=>setSyncStatus("synced"));
   }
 
+  function dismissWelcome(){
+    localStorage.setItem("fnp_welcomed","1");
+    setWelcomed(true);
+  }
+
   async function handleSignIn(){
     const sb=getSupabase();
     if(!sb){alert("Config error: Supabase not initialised. Check env vars in Vercel.");return;}
+    dismissWelcome();
     const{error}=await sb.auth.signInWithOAuth({provider:"google",options:{redirectTo:window.location.origin}});
     if(error)alert("Sign in error: "+error.message);
   }
@@ -1821,7 +1866,8 @@ function AppInner(){
 
   return(
     <div style={{height:"100dvh",display:"flex",flexDirection:"column",background:"var(--linen)"}}>
-      <Header count={recipes.length} onHelp={()=>setShowHelp(true)} session={session}/>
+      {!welcomed&&<WelcomeScreen onSignIn={handleSignIn} onContinue={()=>{dismissWelcome();}}/>}
+      <Header count={recipes.length} onHelp={()=>setShowHelp(true)} session={session} onAccountPress={()=>setTab("settings")}/>
       {showHelp&&<HelpModal onClose={()=>setShowHelp(false)}/>}
       <RecipeModal recipe={globalModalRecipe} onClose={()=>setGlobalModalRecipe(null)} onUpdate={r=>{updateRecipe(r);setGlobalModalRecipe(r);}}/>
       {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")}/>}

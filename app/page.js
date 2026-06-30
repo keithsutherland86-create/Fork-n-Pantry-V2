@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.39";
+const APP_VERSION = "2.40";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.40", title:"Mic reopens only after speech truly ends", items:[
+    "The mic now waits for the spoken step to actually finish instead of a time estimate that cut long steps short",
+  ]},
   { v:"2.39", title:"Further reduce readout distortion", items:[
     "Audio output is briefly delayed so the mic fully releases, and the chime engine is paused during readouts",
   ]},
@@ -483,6 +486,7 @@ function CookMode({recipe,onClose}){
     // Block ALL recognition (and the watchdog) for the duration of speech so the mic
     // never reactivates mid-readout — that simultaneous mic+speaker is the distortion.
     speakingRef.current=true;
+    clearInterval(speakPollRef.current);
     try{voiceRef.current?.abort();}catch{}
     voiceRef.current=null;
     voiceSpawningRef.current=false;
@@ -492,17 +496,31 @@ function CookMode({recipe,onClose}){
     try{ _audioCtx&&_audioCtx.state==="running"&&_audioCtx.suspend(); }catch{}
     const u=new SpeechSynthesisUtterance(text);
     u.lang="en-AU";u.rate=0.92;u.pitch=1;
-    const resume=()=>{ speakingRef.current=false; if(voiceShouldRunRef.current) setTimeout(spawnRecognition,450); };
+    let resumed=false;
+    const resume=()=>{
+      if(resumed)return; resumed=true;
+      clearInterval(speakPollRef.current);
+      speakingRef.current=false;
+      if(voiceShouldRunRef.current) setTimeout(spawnRecognition,450);
+    };
     u.onend=resume;
     u.onerror=resume;
-    // Safety net: if onend never fires (mobile quirk), clear the flag after a max duration
-    const guardMs=Math.min(20000, 1800 + text.length*70);
-    setTimeout(()=>{ if(speakingRef.current) resume(); }, guardMs);
-    // Brief delay so the mic fully releases (abort is async) before audio output begins.
+    // Reopen the mic only once speech has ACTUALLY finished. Polling speechSynthesis.speaking
+    // is reliable where onend is flaky on mobile, and never reopens the mic mid-readout
+    // (a fixed time estimate did — it fired before long steps finished).
+    const start=Date.now();
     setTimeout(()=>{ try{window.speechSynthesis.speak(u);}catch{} }, 220);
+    speakPollRef.current=setInterval(()=>{
+      const ss=window.speechSynthesis;
+      const elapsed=Date.now()-start;
+      // Past the initial 220ms delay, if nothing is speaking/pending, we're done.
+      if(elapsed>700 && ss && !ss.speaking && !ss.pending) resume();
+      else if(elapsed>30000) resume(); // absolute safety cap
+    },250);
   }
   const voiceShouldRunRef=useRef(false);
   const speakingRef=useRef(false);      // true while a step is being read aloud
+  const speakPollRef=useRef(null);      // interval that detects when speech truly ends
   const voiceSpawningRef=useRef(false); // prevents concurrent instances
   const armedRef=useRef(false);         // true after wake phrase, awaiting a command
   const armTimerRef=useRef(null);
@@ -640,13 +658,14 @@ function CookMode({recipe,onClose}){
     voiceShouldRunRef.current=false;
     voiceSpawningRef.current=false;
     speakingRef.current=false;
+    clearInterval(speakPollRef.current);
     disarm();
     try{voiceRef.current?.abort();}catch{}
     voiceRef.current=null;
     try{window.speechSynthesis?.cancel();}catch{}
     setVoiceActive(false);setVoiceHint("");
   }
-  useEffect(()=>()=>{voiceShouldRunRef.current=false;clearTimeout(armTimerRef.current);try{voiceRef.current?.abort();}catch{};window.speechSynthesis?.cancel();},[]);
+  useEffect(()=>()=>{voiceShouldRunRef.current=false;clearTimeout(armTimerRef.current);clearInterval(speakPollRef.current);try{voiceRef.current?.abort();}catch{};window.speechSynthesis?.cancel();},[]);
   // Watchdog: if listening should be on but no instance is alive, restart it.
   // Guarantees voice never silently dies after a command.
   useEffect(()=>{

@@ -13,7 +13,7 @@ export async function GET(req) {
   try { origin = new URL(url).origin; } catch { return new Response("Bad URL", { status: 400 }); }
 
   const controllers = [new AbortController(), new AbortController()];
-  const timeout = setTimeout(() => controllers.forEach(c => c.abort()), 9000);
+  const timeout = setTimeout(() => controllers.forEach(c => c.abort()), 6000);
 
   // Try twice: once with a browser UA, once with Googlebot (some CDNs block mobile UA)
   const attempts = [
@@ -49,7 +49,8 @@ export async function GET(req) {
         status: 200,
         headers: {
           "Content-Type": contentType,
-          "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+          // browser: 7 days; Vercel CDN edge: 30 days; serve stale for 1 year on error or while revalidating
+          "Cache-Control": "public, max-age=604800, s-maxage=2592000, stale-while-revalidate=31536000, stale-if-error=31536000",
           "Access-Control-Allow-Origin": "*",
         },
       });

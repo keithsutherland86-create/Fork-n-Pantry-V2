@@ -1009,7 +1009,7 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared,o
 
 // ─── COOKBOOKS TAB (replaces Categories) ─────────────────────────────────────
 const BOOK_EMOJIS=["📗","📘","📙","📕","📒","📔","🍳","🥘","🍜","🥗","🍱","🧆","🥩","🥦","🌮","🍰","🎂","🫕"];
-function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate}){
+function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,session,sharedBooks=[],onRefreshShared}){
   const[showNew,setShowNew]=useState(false);
   const[newName,setNewName]=useState("");
   const[newEmoji,setNewEmoji]=useState(BOOK_EMOJIS[0]);
@@ -1017,6 +1017,11 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate}
   const[addingTo,setAddingTo]=useState(null);
   const[recipeModal,setRecipeModal]=useState(null);
   const[sharing,setSharing]=useState(null);
+  const[selectedShared,setSelectedShared]=useState(null);
+  const[sharedRecipes,setSharedRecipes]=useState([]);
+  const[loadingShared,setLoadingShared]=useState(false);
+  const[addingToShared,setAddingToShared]=useState(false);
+  const[publishing,setPublishing]=useState(false);
 
   function createBook(){if(!newName.trim())return;const u=[...books,{id:Date.now().toString(),name:newName.trim(),color:CAT_COLORS[books.length%CAT_COLORS.length],emoji:newEmoji,recipeIds:[]}];setBooks(u);save(KEYS.c,u);setNewName("");setShowNew(false);}
   function deleteBook(id){const u=books.filter(c=>c.id!==id);setBooks(u);save(KEYS.c,u);if(selected===id)setSelected(null);}
@@ -1024,17 +1029,90 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate}
   function removeFromBook(bookId,recipeId){const u=books.map(c=>c.id===bookId?{...c,recipeIds:(c.recipeIds||[]).filter(id=>id!==recipeId)}:c);setBooks(u);save(KEYS.c,u);}
 
   async function shareBook(book){
-    const bookRecipes=(book.recipeIds||[]).map(id=>recipes.find(r=>r.id===id)).filter(Boolean);
-    const payload={name:book.name,emoji:book.emoji||"📗",recipes:bookRecipes};
-    const text=`${book.emoji||"📗"} ${book.name}\n\n${bookRecipes.map(r=>`• ${r.title}`).join("\n")}`;
-    if(navigator.share){await navigator.share({title:book.name,text}).catch(()=>{});}
-    else{await navigator.clipboard.writeText(text).catch(()=>{});alert("Cookbook list copied to clipboard!");}
+    if(!session){alert("Sign in to share cookbooks.");return;}
+    setPublishing(true);
+    const published=await sbPublishBook(book,session);
+    setPublishing(false);
+    if(!published){alert("Could not publish cookbook. Please try again.");return;}
+    const url=`${window.location.origin}/?join=${published.invite_code}`;
+    if(navigator.share){navigator.share({title:book.name,text:`Join my cookbook "${book.name}" on Fork n Pantry`,url}).catch(()=>{});}
+    else{navigator.clipboard.writeText(url).then(()=>alert(`Invite link copied!\n\n${url}`));}
+    if(onRefreshShared)onRefreshShared();
   }
+
+  useEffect(()=>{
+    if(!selectedShared){setSharedRecipes([]);return;}
+    setLoadingShared(true);
+    sbLoadSharedRecipes(selectedShared).then(r=>{setSharedRecipes(r);setLoadingShared(false);});
+    const sb=getSupabase();
+    if(!sb)return;
+    const chan=sb.channel("scr-"+selectedShared)
+      .on("postgres_changes",{event:"*",schema:"public",table:"shared_cookbook_recipes",filter:`cookbook_id=eq.${selectedShared}`},
+        ()=>sbLoadSharedRecipes(selectedShared).then(setSharedRecipes))
+      .subscribe();
+    return()=>chan.unsubscribe();
+  },[selectedShared]);
 
   const book=books.find(c=>c.id===selected);
   const bookRecipes=book?(book.recipeIds||[]).map(id=>recipes.find(r=>r.id===id)).filter(Boolean):[];
   const notInBook=book?recipes.filter(r=>!(book.recipeIds||[]).includes(r.id)):[];
   const inp={background:"var(--cream)",border:"1.5px solid var(--parchment)",borderRadius:"var(--r-md)",padding:"11px 14px",fontSize:14,outline:"none",color:"var(--ink)",width:"100%"};
+
+  // Shared book detail view
+  const sharedBook=sharedBooks.find(b=>b.id===selectedShared);
+  if(selectedShared&&sharedBook) return(
+    <div style={{flex:1,overflowY:"auto",paddingBottom:90}}>
+      <div style={{padding:"12px 16px 10px",display:"flex",alignItems:"center",gap:10}}>
+        <button onClick={()=>setSelectedShared(null)} className="btn-ghost" style={{padding:"7px 13px",fontSize:13}}>← Back</button>
+        <span style={{fontSize:22}}>{sharedBook.emoji}</span>
+        <span className="serif" style={{fontWeight:600,fontSize:19,color:"var(--forest)",flex:1}}>{sharedBook.name}</span>
+        <div style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:12,padding:"3px 9px",fontSize:10,fontWeight:700,color:"var(--moss)"}}>🌐 Shared</div>
+      </div>
+      <div style={{padding:"0 16px 6px",fontSize:12,color:"var(--mist)"}}>{sharedRecipes.length} recipe{sharedRecipes.length!==1?"s":""} · by {sharedBook.owner_name}</div>
+      <div style={{padding:"4px 16px"}}>
+        {loadingShared&&<div style={{textAlign:"center",padding:"30px 0",color:"var(--mist)",fontSize:14}}>Loading…</div>}
+        {sharedRecipes.map(row=>(
+          <div key={row.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 0",borderBottom:"1px solid var(--parchment)",cursor:"pointer"}} onClick={()=>setRecipeModal({...row.recipe,_sharedRowId:row.id})}>
+            <div style={{width:50,height:50,borderRadius:12,overflow:"hidden",flexShrink:0}}><RImg recipe={row.recipe} style={{width:"100%",height:"100%"}}/></div>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:14,color:"var(--forest)"}}>{row.recipe.title}</div>
+              <div style={{fontSize:11,color:"var(--mist)",marginTop:2}}>Added by {row.added_by_name}</div>
+            </div>
+            {row.added_by===session?.user?.id&&(
+              <button onClick={e=>{e.stopPropagation();sbRemoveSharedRecipe(row.id).then(()=>sbLoadSharedRecipes(selectedShared).then(setSharedRecipes));}}
+                style={{background:"none",border:"none",color:"var(--mist)",fontSize:18,cursor:"pointer"}}>×</button>
+            )}
+          </div>
+        ))}
+        {!loadingShared&&sharedRecipes.length===0&&<div style={{textAlign:"center",paddingTop:40,color:"var(--mist)",fontSize:14}}>No recipes yet — add the first one!</div>}
+      </div>
+      <div style={{padding:"12px 16px 0"}}>
+        <button onClick={()=>setAddingToShared(true)} className="btn-ghost" style={{width:"100%",padding:"13px 0",fontSize:14,borderRadius:"var(--r-md)"}}>+ Add a recipe</button>
+      </div>
+      {addingToShared&&(
+        <Sheet onClose={()=>setAddingToShared(false)}>
+          <div style={{padding:"14px 18px 24px"}}>
+            <div className="serif" style={{fontWeight:600,fontSize:20,color:"var(--forest)",marginBottom:14}}>Add to {sharedBook.name}</div>
+            {recipes.length===0
+              ?<div style={{color:"var(--mist)",fontSize:14,textAlign:"center",padding:"20px 0"}}>No recipes saved yet.</div>
+              :recipes.map(r=>(
+                <div key={r.id} onClick={async()=>{await sbAddSharedRecipe(selectedShared,r,session);sbLoadSharedRecipes(selectedShared).then(setSharedRecipes);setAddingToShared(false);}}
+                  style={{display:"flex",alignItems:"center",gap:12,padding:"11px 0",borderBottom:"1px solid var(--parchment)",cursor:"pointer"}}>
+                  <div style={{width:50,height:50,borderRadius:12,overflow:"hidden",flexShrink:0}}><RImg recipe={r} style={{width:"100%",height:"100%"}}/></div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,fontSize:14,color:"var(--forest)"}}>{r.title}</div>
+                    <div style={{display:"flex",gap:3,marginTop:2}}>{(r.tags||[]).slice(0,2).map(t=><Chip key={t} label={t} sm/>)}</div>
+                  </div>
+                  <div style={{background:"var(--sage-pale)",borderRadius:"50%",width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--moss)",fontSize:18,fontWeight:700}}>+</div>
+                </div>
+              ))
+            }
+          </div>
+        </Sheet>
+      )}
+      <RecipeModal recipe={recipeModal} onClose={()=>setRecipeModal(null)} onUpdate={r=>{if(onUpdate)onUpdate(r);setRecipeModal(r);}}/>
+    </div>
+  );
 
   if(selected&&book) return(
     <div style={{flex:1,overflowY:"auto",paddingBottom:90}}>
@@ -1110,6 +1188,7 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate}
                 <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:3}}>
                   <span style={{fontSize:18}}>{bk.emoji||"📗"}</span>
                   <span style={{fontWeight:700,fontSize:15,color:"var(--forest)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bk.name}</span>
+                  {sharedBooks.some(sb=>sb.id===bk.id)&&<span style={{fontSize:10,background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:8,padding:"1px 6px",color:"var(--moss)",fontWeight:700,flexShrink:0}}>🌐</span>}
                 </div>
                 <div style={{fontSize:12,color:"var(--mist)"}}>{bkRecs.length} recipe{bkRecs.length!==1?"s":""}</div>
                 {bkRecs.length>0&&<div style={{fontSize:11,color:"var(--dust)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bkRecs.slice(0,3).map(r=>r.title).join(" · ")}</div>}
@@ -1119,6 +1198,26 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate}
           );
         })}
       </div>
+      {session&&sharedBooks.filter(sb=>sb.owner_id!==session?.user?.id).length>0&&(
+        <div style={{padding:"16px 16px 0"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"var(--mist)",letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:10}}>Shared with me</div>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {sharedBooks.filter(sb=>sb.owner_id!==session?.user?.id).map(bk=>(
+              <div key={bk.id} onClick={()=>setSelectedShared(bk.id)}
+                style={{display:"flex",alignItems:"center",gap:14,background:"var(--cream)",borderRadius:"var(--r-lg)",border:"1.5px solid var(--sage-lt)",boxShadow:"var(--sh-sm)",padding:"12px 14px",cursor:"pointer"}}>
+                <div style={{width:44,height:44,borderRadius:10,background:"var(--sage-pale)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>{bk.emoji}</div>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontWeight:700,fontSize:15,color:"var(--forest)"}}>{bk.name}</span>
+                    <span style={{fontSize:10,background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:8,padding:"1px 6px",color:"var(--moss)",fontWeight:700}}>🌐</span>
+                  </div>
+                  <div style={{fontSize:12,color:"var(--mist)",marginTop:2}}>by {bk.owner_name}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div style={{padding:"16px 16px 0"}}>
         <button onClick={()=>setShowNew(true)} className="btn-primary" style={{width:"100%",padding:"13px 0",fontSize:14,borderRadius:"var(--r-md)"}}>+ New Cookbook</button>
       </div>
@@ -2030,6 +2129,53 @@ async function cloudUploadAll(recipes,userId){
   await sb.from("recipes").upsert(rows,{onConflict:"id,user_id"});
 }
 
+// ─── Shared cookbook cloud helpers ────────────────────────────────────────────
+async function sbPublishBook(book, session) {
+  const sb = getSupabase(); if (!sb) return null;
+  const { data, error } = await sb.from("shared_cookbooks").upsert({
+    id: book.id,
+    name: book.name,
+    emoji: book.emoji || "📗",
+    owner_id: session.user.id,
+    owner_name: session.user.user_metadata?.full_name || session.user.email,
+  }, { onConflict: "id" }).select().maybeSingle();
+  if (error) { console.error(error); return null; }
+  return data;
+}
+async function sbLoadMySharedBooks(session) {
+  const sb = getSupabase(); if (!sb) return [];
+  const { data } = await sb.from("shared_cookbooks").select("*").order("created_at");
+  return data || [];
+}
+async function sbLoadSharedRecipes(cookbookId) {
+  const sb = getSupabase(); if (!sb) return [];
+  const { data } = await sb.from("shared_cookbook_recipes").select("*").eq("cookbook_id", cookbookId).order("created_at");
+  return data || [];
+}
+async function sbAddSharedRecipe(cookbookId, recipe, session) {
+  const sb = getSupabase(); if (!sb) return;
+  await sb.from("shared_cookbook_recipes").insert({
+    cookbook_id: cookbookId,
+    recipe,
+    added_by: session.user.id,
+    added_by_name: session.user.user_metadata?.full_name || session.user.email,
+  });
+}
+async function sbRemoveSharedRecipe(rowId) {
+  const sb = getSupabase(); if (!sb) return;
+  await sb.from("shared_cookbook_recipes").delete().eq("id", rowId);
+}
+async function sbGetBookByInvite(code) {
+  const sb = getSupabase(); if (!sb) return null;
+  const { data } = await sb.rpc("cookbook_by_invite", { code });
+  return data?.[0] || null;
+}
+async function sbJoinCookbook(code) {
+  const sb = getSupabase(); if (!sb) return null;
+  const { data } = await sb.rpc("join_cookbook", { code });
+  return data;
+}
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
 function AppInner(){
   const[recipes,setRecipes]=useState([]);
@@ -2042,6 +2188,8 @@ function AppInner(){
   const[globalModalRecipe,setGlobalModalRecipe]=useState(null);
   const[session,setSession]=useState(null);
   const[syncStatus,setSyncStatus]=useState("idle");
+  const[sharedBooks,setSharedBooks]=useState([]);
+  const[joinPreview,setJoinPreview]=useState(null);
   const[welcomed,setWelcomed]=useState(true); // true = skip screen until we check storage
   const[toast,setToast]=useState(null); // {type:"success"|"error", recipe?, message}
   const toastTimer=useRef(null);
@@ -2065,6 +2213,8 @@ function AppInner(){
     if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
     const shared=searchParams.get("shared");
     if(shared){setSharedPrefill(decodeURIComponent(shared));setTab("recipes");router.replace("/");}
+    const joinCode=searchParams.get("join");
+    if(joinCode){router.replace("/");sessionStorage.setItem("fnp_join_code",joinCode);}
     try{const t=localStorage.getItem(KEYS.t);if(t==="dark")document.documentElement.setAttribute("data-theme","dark");}catch{}
     // Show welcome screen on first ever open
     const seen=localStorage.getItem("fnp_welcomed");
@@ -2076,11 +2226,19 @@ function AppInner(){
     if(sb){
       sb.auth.getSession().then(({data:{session:s}})=>{
         setSession(s);
-        if(s)syncOnLogin(s.user.id,localRecipes);
+        if(s){
+          syncOnLogin(s.user.id,localRecipes);
+          sbLoadMySharedBooks(s).then(setSharedBooks);
+          const pendingJoin=sessionStorage.getItem("fnp_join_code");
+          if(pendingJoin){
+            sessionStorage.removeItem("fnp_join_code");
+            sbGetBookByInvite(pendingJoin).then(info=>{if(info)setJoinPreview({...info,code:pendingJoin});});
+          }
+        }
       });
       const{data:{subscription}}=sb.auth.onAuthStateChange((_event,s)=>{
         setSession(s);
-        if(s){syncOnLogin(s.user.id,load(KEYS.r));}
+        if(s){syncOnLogin(s.user.id,load(KEYS.r));sbLoadMySharedBooks(s).then(setSharedBooks);}
       });
       return()=>subscription.unsubscribe();
     }
@@ -2151,7 +2309,16 @@ function AppInner(){
   async function handleSignOut(){
     const sb=getSupabase();if(!sb)return;
     await sb.auth.signOut();
-    setSession(null);setSyncStatus("idle");
+    setSession(null);setSyncStatus("idle");setSharedBooks([]);
+  }
+
+  async function handleJoin(){
+    if(!joinPreview||!session)return;
+    await sbJoinCookbook(joinPreview.code);
+    const updated=await sbLoadMySharedBooks(session);
+    setSharedBooks(updated);
+    setJoinPreview(null);
+    setTab("categories");
   }
 
   return(
@@ -2161,7 +2328,21 @@ function AppInner(){
       {showHelp&&<HelpModal onClose={()=>setShowHelp(false)}/>}
       <RecipeModal recipe={globalModalRecipe} onClose={()=>setGlobalModalRecipe(null)} onUpdate={r=>{updateRecipe(r);setGlobalModalRecipe(r);}}/>
       {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")} onImportFail={()=>showToast("error",null,"Import failed — couldn't read that recipe")} onRefresh={session?async()=>{setSyncStatus("syncing");const cloud=await cloudLoad(session.user.id);if(cloud){setRecipes(cloud);save(KEYS.r,cloud);setSyncStatus("synced");}else setSyncStatus("idle");}:null}/>}
-      {tab==="categories"&&<CookbooksTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe}/>}
+      {tab==="categories"&&<CookbooksTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe} session={session} sharedBooks={sharedBooks} onRefreshShared={()=>sbLoadMySharedBooks(session).then(setSharedBooks)}/>}
+      {joinPreview&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(15,24,17,.6)",backdropFilter:"blur(5px)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+          <div style={{background:"var(--linen)",borderRadius:"var(--r-xl)",padding:"28px 24px",maxWidth:340,width:"100%",textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
+            <div style={{fontSize:48,marginBottom:8}}>{joinPreview.emoji}</div>
+            <div className="serif" style={{fontWeight:700,fontSize:22,color:"var(--forest)",marginBottom:6}}>{joinPreview.name}</div>
+            <div style={{fontSize:13,color:"var(--mist)",marginBottom:24}}>Shared by {joinPreview.owner_name}</div>
+            <div style={{fontSize:14,color:"var(--ink)",marginBottom:24,lineHeight:1.6}}>You've been invited to collaborate on this cookbook. Both of you can add and view recipes.</div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setJoinPreview(null)} className="btn-ghost" style={{flex:1,padding:"12px 0",borderRadius:"var(--r-md)"}}>Decline</button>
+              <button onClick={handleJoin} className="btn-primary" style={{flex:1,padding:"12px 0",borderRadius:"var(--r-md)"}}>Join Cookbook</button>
+            </div>
+          </div>
+        </div>
+      )}
       {tab==="planner"&&<PlannerTab recipes={recipes} planner={planner} setPlanner={setPlanner} onUpdate={updateRecipe}/>}
       {tab==="scan"&&<ScanTab recipes={recipes} onOpenRecipe={r=>setSelectedRecipeGlobal(r)}/>}
       {tab==="grocery"&&<GroceryTab/>}

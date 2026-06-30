@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.31";
+const APP_VERSION = "2.32";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.32", title:"Fix audio interference with voice readout", items:[
+    "Beeps no longer interfere with spoken step readouts — shared audio context, speech delayed slightly after tone",
+  ]},
   { v:"2.31", title:"Wake phrase audio cue", items:[
     "A rising two-tone chime plays when the wake phrase is heard — so you know to speak your command",
   ]},
@@ -406,6 +409,14 @@ function getStepEmojis(text){
   return[...new Set(found)].slice(0,3);
 }
 
+let _audioCtx=null;
+function getAudioCtx(){
+  try{
+    if(!_audioCtx||_audioCtx.state==="closed") _audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    if(_audioCtx.state==="suspended") _audioCtx.resume().catch(()=>{});
+    return _audioCtx;
+  }catch{return null;}
+}
 function CookMode({recipe,onClose}){
   const[step,setStep]=useState(0);
   const[ingsOpen,setIngsOpen]=useState(false);
@@ -473,10 +484,10 @@ function CookMode({recipe,onClose}){
   function act(cmd){
     if(cmd==="whatsnext"){
       const nextIdx=Math.min(stepRef.current+1,total-1);
-      if(nextIdx>stepRef.current){setStep(nextIdx);speak(steps[nextIdx]);setVoiceHint(`→ Step ${nextIdx+1}`);}
-      else{speak("That's the last step.");setVoiceHint("Last step");}
+      if(nextIdx>stepRef.current){setStep(nextIdx);setTimeout(()=>speak(steps[nextIdx]),180);setVoiceHint(`→ Step ${nextIdx+1}`);}
+      else{setTimeout(()=>speak("That's the last step."),180);setVoiceHint("Last step");}
     }
-    else if(cmd==="repeat"){speak(steps[stepRef.current]);setVoiceHint("↻ Reading step");}
+    else if(cmd==="repeat"){setTimeout(()=>speak(steps[stepRef.current]),180);setVoiceHint("↻ Reading step");}
     else if(cmd==="next"){setStep(s=>Math.min(total-1,s+1));setVoiceHint("→ Next step");}
     else if(cmd==="back"){setStep(s=>Math.max(0,s-1));setVoiceHint("← Back");}
     else if(cmd==="timer"){
@@ -493,7 +504,7 @@ function CookMode({recipe,onClose}){
   }
   function playTone(freq=880,dur=0.13,vol=0.18){
     try{
-      const ctx=new(window.AudioContext||window.webkitAudioContext)();
+      const ctx=getAudioCtx();if(!ctx)return;
       const osc=ctx.createOscillator(),g=ctx.createGain();
       osc.connect(g);g.connect(ctx.destination);
       osc.frequency.value=freq;osc.type="sine";

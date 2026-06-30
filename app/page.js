@@ -5,7 +5,7 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.17";
+const APP_VERSION = "2.20";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
@@ -397,18 +397,17 @@ function CookMode({recipe,onClose}){
     u.lang="en-AU";u.rate=0.92;u.pitch=1;
     window.speechSynthesis.speak(u);
   }
-  // Auto-read current step whenever voice is active and step changes
-  useEffect(()=>{if(voiceActive)speak(steps[step]);},[step,voiceActive]);// eslint-disable-line
-
   const voiceShouldRunRef=useRef(false);
   const voiceSpawningRef=useRef(false); // prevents concurrent instances
 
   function handleVoiceResult(raw){
-    // Strip optional wake phrase — also catches common mishears
-    const t=raw.toLowerCase().trim().replace(/^(hey\s+fork|hey\s+four|a\s+fork)\s*/,"");
-    // Require the phrase to contain a known command — ignore ambient chatter
-    const COMMANDS=/\b(next|back|previous|prev|repeat|read|what'?s?\s+next|timer)\b/;
-    if(!COMMANDS.test(t))return;
+    // Wake phrase REQUIRED every time — find "hey fork" (and common mishears) and act
+    // only on what follows it. Anything without the wake phrase is ignored entirely.
+    const lc=raw.toLowerCase().trim();
+    const wake=lc.match(/(?:hey|hi|ok|okay|a)\s*(?:fork|four|folk|forks|for)\b[\s,]*(.*)/);
+    if(!wake)return;
+    const t=wake[1].trim();
+    if(!t)return;
     let acted=false;
     if(/\b(what'?s?\s+next|read\s+next)\b/.test(t)){
       const nextIdx=Math.min(stepRef.current+1,total-1);
@@ -423,7 +422,7 @@ function CookMode({recipe,onClose}){
       if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");acted=true;}
       else{speak("No timer found in this step.");setVoiceHint("No timer in this step");}
     }
-    if(acted)setTimeout(()=>setVoiceHint("🎙️ Listening…"),1800);
+    if(acted)setTimeout(()=>setVoiceHint("🎙️ Say 'Hey Fork…'"),1800);
   }
 
   function spawnRecognition(){
@@ -455,7 +454,7 @@ function CookMode({recipe,onClose}){
     voiceShouldRunRef.current=true;
     voiceSpawningRef.current=false;
     setVoiceActive(true);
-    setVoiceHint("🎙️ Listening… say 'Hey Fork, next'");
+    setVoiceHint("🎙️ Say 'Hey Fork, next'");
     spawnRecognition();
   }
   function stopVoice(){
@@ -2587,7 +2586,7 @@ const HELP_SECTIONS=[
   {icon:"📋",title:"Adding Recipes",body:"Tap + Add Recipe on the Recipes tab. Paste a URL from any recipe website and AI will extract everything automatically. You can also take a photo of a cookbook page, paste copied text, or enter a recipe manually."},
   {icon:"🔍",title:"Searching & Filtering",body:"Use the search bar to find recipes by name, tag, or source. Filter by tag using the pills below the search bar. Toggle ❤️ Favourites to see only your saved favourites. Use A–Z or Calories sort to reorder."},
   {icon:"🥗",title:"What Can I Make?",body:"Tap '🥗 What can I make?' on the Recipes tab. Type in ingredients you have on hand separated by commas — the app will score and rank your recipes by how many ingredients match."},
-  {icon:"👨‍🍳",title:"Cook Mode",body:"Open any recipe and scroll to the Method section. Tap 'Cook Mode' for a full-screen step-by-step guide. Tap 🔊 Read aloud to hear the current step spoken. Tap 🎙️ once to enable hands-free voice — it stays on until you tap again. Say 'Hey Fork, next', 'Hey Fork, back', 'Hey Fork, repeat', 'Hey Fork, what's next' (previews the next step without moving), or 'Hey Fork, timer'. When voice is on, each step is read aloud automatically as you move through them."},
+  {icon:"👨‍🍳",title:"Cook Mode",body:"Open any recipe and scroll to the Method section. Tap 'Cook Mode' for a full-screen step-by-step guide. Tap 🔊 Read aloud to hear the current step spoken. Tap 🎙️ once to enable hands-free voice — it stays on until you tap again. Start every command with 'Hey Fork' so it ignores normal kitchen chatter: 'Hey Fork, next', 'Hey Fork, back', 'Hey Fork, repeat', 'Hey Fork, read this', 'Hey Fork, what's next' (previews the next step without moving), or 'Hey Fork, timer'."},
   {icon:"⏱",title:"Timers",body:"Inside a recipe, tap the prep time or cook time chip to start a countdown timer. The timer banner shows at the top of the recipe. Tap Pause/Resume as needed. The banner turns amber when under 30 seconds and red when done."},
   {icon:"🛒",title:"Grocery List",body:"Open any recipe and tap '+ All' under Ingredients to add everything to your list, or tick individual ingredients and tap '+ Grocery' to add just those. The Grocery tab shows your full list. Tap items to check them off. Share the list via the 📤 button."},
   {icon:"📅",title:"Meal Planner",body:"The Planner tab shows a weekly meal grid. Tap any slot to assign a recipe. Use the ‹ › arrows to navigate between weeks. Tap 'Grocery' to build a shopping list from all planned meals automatically."},

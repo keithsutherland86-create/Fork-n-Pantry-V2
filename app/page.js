@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.38";
+const APP_VERSION = "2.39";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.39", title:"Further reduce readout distortion", items:[
+    "Audio output is briefly delayed so the mic fully releases, and the chime engine is paused during readouts",
+  ]},
   { v:"2.38", title:"Eliminate voice readout distortion", items:[
     "The mic is now fully blocked while a step is read aloud — the watchdog was reopening it mid-speech",
   ]},
@@ -484,6 +487,9 @@ function CookMode({recipe,onClose}){
     voiceRef.current=null;
     voiceSpawningRef.current=false;
     window.speechSynthesis.cancel();
+    // Suspend the Web Audio context: an open AudioContext (kept alive for the chimes)
+    // holds an audio output route that can clash with SpeechSynthesis on mobile.
+    try{ _audioCtx&&_audioCtx.state==="running"&&_audioCtx.suspend(); }catch{}
     const u=new SpeechSynthesisUtterance(text);
     u.lang="en-AU";u.rate=0.92;u.pitch=1;
     const resume=()=>{ speakingRef.current=false; if(voiceShouldRunRef.current) setTimeout(spawnRecognition,450); };
@@ -492,7 +498,8 @@ function CookMode({recipe,onClose}){
     // Safety net: if onend never fires (mobile quirk), clear the flag after a max duration
     const guardMs=Math.min(20000, 1800 + text.length*70);
     setTimeout(()=>{ if(speakingRef.current) resume(); }, guardMs);
-    window.speechSynthesis.speak(u);
+    // Brief delay so the mic fully releases (abort is async) before audio output begins.
+    setTimeout(()=>{ try{window.speechSynthesis.speak(u);}catch{} }, 220);
   }
   const voiceShouldRunRef=useRef(false);
   const speakingRef=useRef(false);      // true while a step is being read aloud

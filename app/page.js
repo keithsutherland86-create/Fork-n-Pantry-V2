@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.15";
+const APP_VERSION = "2.16";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.16", title:"Feature spotlight", items:[
+    "What's New now spotlights standout features like AI Refresh and Shared Cookbooks",
+  ]},
   { v:"2.15", title:"What's New screen", items:[
     "Added this What's New screen — it pops up once after a big update, and you can reopen it any time under Settings → What's New",
   ]},
@@ -25,6 +28,11 @@ const CHANGELOG = [
 ];
 // Most recent significant release — the only one that auto-pops What's New on open
 const LATEST_NOTABLE = (CHANGELOG.find(c=>c.major)||CHANGELOG[0]).v;
+// [PRO] Features showcased in What's New — flagged for a future Pro tier
+const PRO_FEATURES = [
+  { icon:"🔍", name:"AI Refresh", desc:"Recipe imported with missing steps or ingredients? Tap AI Refresh in the editor and it digs deeper into the source — re-reading the page and video for everything the quick import missed, then fills the gaps automatically." },
+  { icon:"🌐", name:"Shared Cookbooks", desc:"Invite family or friends to a cookbook and build it together. Everyone's additions sync live, you can see who's joined, and recipes flow both ways — perfect for planning meals as a household." },
+];
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
 const KEYS = { r:"fnp_r4", c:"fnp_c3", p:"fnp_p3", g:"fnp_g1", t:"fnp_theme" };
@@ -2367,6 +2375,24 @@ function WhatsNewModal({onClose}){
           <button onClick={onClose} style={{background:"var(--sage-pale)",border:"none",borderRadius:"50%",width:32,height:32,fontSize:18,cursor:"pointer",color:"var(--forest)",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
         </div>
         <div style={{overflowY:"auto",flex:1,padding:"0 20px 24px"}}>
+          {/* [PRO] Showcase block */}
+          <div style={{marginBottom:22,borderRadius:"var(--r-lg)",overflow:"hidden",border:"1px solid var(--sage-lt)",background:"linear-gradient(160deg,#1E3828,#16291D)"}}>
+            <div style={{padding:"14px 16px 10px",display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:10,fontWeight:800,letterSpacing:"0.08em",color:"#0A1A10",background:"linear-gradient(90deg,#FFD66B,#E8B84B)",borderRadius:20,padding:"3px 9px"}}>★ PRO</span>
+              <span className="serif" style={{fontWeight:600,fontSize:16,color:"#F5F2EC"}}>Powerful new features</span>
+            </div>
+            <div style={{padding:"0 16px 16px",display:"flex",flexDirection:"column",gap:14}}>
+              {PRO_FEATURES.map((f,i)=>(
+                <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                  <span style={{fontSize:22,flexShrink:0,marginTop:1}}>{f.icon}</span>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:14,color:"#F5F2EC",marginBottom:3}}>{f.name}</div>
+                    <div style={{fontSize:13,color:"rgba(245,242,236,.78)",lineHeight:1.55}}>{f.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
           {CHANGELOG.map((rel,i)=>(
             <div key={rel.v} style={{marginBottom:20}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>

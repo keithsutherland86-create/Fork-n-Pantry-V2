@@ -401,50 +401,67 @@ function CookMode({recipe,onClose}){
   useEffect(()=>{if(voiceActive)speak(steps[step]);},[step,voiceActive]);// eslint-disable-line
 
   const voiceShouldRunRef=useRef(false);
+  const voiceSpawningRef=useRef(false); // prevents concurrent instances
+
+  function handleVoiceResult(raw){
+    // Strip optional wake phrase — also catches common mishears
+    const t=raw.toLowerCase().trim().replace(/^(hey\s+fork|hey\s+four|a\s+fork)\s*/,"");
+    // Require the phrase to contain a known command — ignore ambient chatter
+    const COMMANDS=/\b(next|back|previous|prev|repeat|read|what'?s?\s+next|timer)\b/;
+    if(!COMMANDS.test(t))return;
+    let acted=false;
+    if(/\b(what'?s?\s+next|read\s+next)\b/.test(t)){
+      const nextIdx=Math.min(stepRef.current+1,total-1);
+      if(nextIdx>stepRef.current){speak(steps[nextIdx]);setVoiceHint(`→ Step ${nextIdx+1}`);acted=true;}
+      else{speak("That's the last step.");setVoiceHint("Last step");acted=true;}
+    }
+    else if(/\b(read\s+(this|step|again)|repeat)\b/.test(t)){speak(steps[stepRef.current]);setVoiceHint("↻ Reading step");acted=true;}
+    else if(/\bnext\b/.test(t)){setStep(s=>Math.min(total-1,s+1));setVoiceHint("→ Next step");acted=true;}
+    else if(/\b(back|previous|prev)\b/.test(t)){setStep(s=>Math.max(0,s-1));setVoiceHint("← Back");acted=true;}
+    else if(/\btimer\b/.test(t)){
+      const m=steps[stepRef.current]?.match(TIME_RE);
+      if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");acted=true;}
+      else{speak("No timer found in this step.");setVoiceHint("No timer in this step");}
+    }
+    if(acted)setTimeout(()=>setVoiceHint("🎙️ Listening…"),1800);
+  }
+
   function spawnRecognition(){
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR||!voiceShouldRunRef.current)return;
-    const r=new SR();r.continuous=true;r.interimResults=false;r.lang="en-AU";
+    if(!SR||!voiceShouldRunRef.current||voiceSpawningRef.current)return;
+    voiceSpawningRef.current=true;
+    // Always abort the previous instance before creating a new one
+    try{voiceRef.current?.abort();}catch{}
+    const r=new SR();
+    // continuous=false + auto-restart is far more reliable on mobile than continuous=true
+    r.continuous=false;r.interimResults=false;r.lang="en-AU";
     r.onresult=e=>{
-      const raw=e.results[e.results.length-1][0].transcript.toLowerCase().trim();
-      // Strip optional wake phrase "hey fork" / "a fork" / "hey four" (common mishears)
-      const t=raw.replace(/^(hey\s+fork|hey\s+four|a\s+fork)\s*/,"");
-      let acted=false;
-      if(/\b(what'?s?\s+next|read\s+next)\b/.test(t)){
-        const nextIdx=Math.min(stepRef.current+1,total-1);
-        if(nextIdx>stepRef.current){speak(steps[nextIdx]);setVoiceHint(`→ Step ${nextIdx+1}`);acted=true;}
-        else{speak("That's the last step.");setVoiceHint("Last step");acted=true;}
-      }
-      else if(/\b(read\s+(this|step|again)|repeat)\b/.test(t)){speak(steps[stepRef.current]);setVoiceHint("↻ Reading step");acted=true;}
-      else if(/\bnext\b/.test(t)){setStep(s=>Math.min(total-1,s+1));setVoiceHint("→ Next step");acted=true;}
-      else if(/\b(back|previous|prev)\b/.test(t)){setStep(s=>Math.max(0,s-1));setVoiceHint("← Back");acted=true;}
-      else if(/\btimer\b/.test(t)){
-        const m=steps[stepRef.current]?.match(TIME_RE);
-        if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");acted=true;}
-        else{speak("No timer found in this step.");setVoiceHint("No timer in this step");}
-      }
-      if(acted)setTimeout(()=>setVoiceHint("🎙️ Listening…"),1800);
+      const raw=e.results[0]?.[0]?.transcript||"";
+      handleVoiceResult(raw);
     };
     r.onerror=err=>{
-      // "no-speech" and "aborted" are normal — just restart; other errors surface briefly
       if(err.error!=="no-speech"&&err.error!=="aborted")setVoiceHint("Mic error — retrying…");
     };
-    // Auto-restart on end so it stays active across silence gaps
-    r.onend=()=>{if(voiceShouldRunRef.current)setTimeout(spawnRecognition,300);};
-    try{r.start();}catch{}
-    voiceRef.current=r;
+    r.onend=()=>{
+      voiceSpawningRef.current=false;
+      // Wait briefly then restart — gives the browser mic a moment to release
+      if(voiceShouldRunRef.current)setTimeout(spawnRecognition,250);
+    };
+    try{r.start();voiceRef.current=r;}catch{voiceSpawningRef.current=false;}
   }
   function startVoice(){
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     if(!SR){setVoiceHint("Voice not supported in this browser");return;}
     voiceShouldRunRef.current=true;
+    voiceSpawningRef.current=false;
     setVoiceActive(true);
     setVoiceHint("🎙️ Listening… say 'Hey Fork, next'");
     spawnRecognition();
   }
   function stopVoice(){
     voiceShouldRunRef.current=false;
-    try{voiceRef.current?.stop();}catch{}
+    voiceSpawningRef.current=false;
+    try{voiceRef.current?.abort();}catch{}
     setVoiceActive(false);setVoiceHint("");
   }
   useEffect(()=>()=>{voiceShouldRunRef.current=false;try{voiceRef.current?.stop();}catch{};window.speechSynthesis?.cancel();},[]);

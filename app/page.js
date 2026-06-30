@@ -1346,6 +1346,55 @@ function GrocerySheet({items:initItems,onClose,onRefresh}){
 }
 
 // ─── GROCERY TAB ──────────────────────────────────────────────────────────────
+// Ingredient quantity parsing helpers
+const _FM={'½':0.5,'¼':0.25,'¾':0.75,'⅓':1/3,'⅔':2/3,'⅛':0.125,'⅜':0.375,'⅝':0.625,'⅞':0.875};
+const _VOL={'tsp':4.929,'teaspoon':4.929,'teaspoons':4.929,'tbsp':14.787,'tablespoon':14.787,'tablespoons':14.787,'cup':236.588,'cups':236.588,'ml':1,'l':1000,'litre':1000,'litres':1000,'liter':1000,'liters':1000};
+const _WGT={'g':1,'gram':1,'grams':1,'kg':1000,'kilogram':1000,'kilograms':1000,'oz':28.349,'ounce':28.349,'ounces':28.349,'lb':453.592,'lbs':453.592,'pound':453.592,'pounds':453.592};
+const VOL_CYCLE=['cup','tbsp','tsp','ml'];
+const WGT_CYCLE=['g','kg','oz'];
+function _evalFrac(s){return s.trim().split(/\s+/).reduce((t,p)=>{if(p.includes('/'))return t+parseFloat(p.split('/')[0])/parseFloat(p.split('/')[1]);return t+(parseFloat(p)||0);},0);}
+function _fmtQty(n){
+  if(!n||!isFinite(n)||n===0)return'';
+  const fracs=[[1,4],[1,3],[1,2],[2,3],[3,4],[1,8],[3,8]];
+  const whole=Math.floor(n);const rem=n-whole;
+  for(const[a,b]of fracs){if(Math.abs(rem-a/b)<0.04){const f=`${a}/${b}`;return whole>0?`${whole} ${f}`:f;}}
+  if(Math.abs(n-Math.round(n))<0.04)return String(Math.round(n));
+  return parseFloat(n.toFixed(2))+'';
+}
+function _parseIng(raw){
+  let s=raw.trim().replace(/[½¼¾⅓⅔⅛⅜⅝⅞]/g,m=>' '+(_FM[m]||0)+' ');
+  let qty=0,unit='';
+  const numM=s.match(/^([\d\s./]+)/);
+  if(numM){qty=_evalFrac(numM[1]);s=s.slice(numM[0].length).trim();}
+  const uM=s.match(/^(tsp|tbsp|tablespoon(?:s)?|teaspoon(?:s)?|cup(?:s)?|ml|l|kg|g|oz|lb(?:s)?|pound(?:s)?|gram(?:s)?|ounce(?:s)?|liter(?:s)?|litre(?:s)?|kilogram(?:s)?)\b\.?\s*/i);
+  if(uM){unit=uM[1].toLowerCase();s=s.slice(uM[0].length).trim();}
+  const name=s.replace(/^of\s+/i,'').trim().toLowerCase();
+  return{qty,unit,name,raw};
+}
+function _utype(u){if(_VOL[u])return'vol';if(_WGT[u])return'wgt';return'count';}
+function _toBase(qty,unit,type){if(type==='vol')return qty*(_VOL[unit]||1);if(type==='wgt')return qty*(_WGT[unit]||1);return qty;}
+function _display(base,type,ov){
+  if(type==='vol'){const u=ov||(base<14?'tsp':base<60?'tbsp':base<500?'cup':'ml');return{qty:_fmtQty(base/(_VOL[u]||1)),unit:u};}
+  if(type==='wgt'){const u=ov||(base<1000?'g':'kg');return{qty:_fmtQty(base/(_WGT[u]||1)),unit:u};}
+  return{qty:_fmtQty(base),unit:ov||''};
+}
+function _nextUnit(unit,type){
+  if(type==='vol'){const i=VOL_CYCLE.indexOf(unit);return VOL_CYCLE[(i<0?0:i+1)%VOL_CYCLE.length];}
+  if(type==='wgt'){const i=WGT_CYCLE.indexOf(unit);return WGT_CYCLE[(i<0?0:i+1)%WGT_CYCLE.length];}
+  return unit;
+}
+function _mergeItems(items){
+  const map=new Map();
+  for(const it of items){
+    const p=_parseIng(it.text);
+    const type=_utype(p.unit);
+    const key=p.name+'|'+type;
+    if(!map.has(key))map.set(key,{key,name:p.name,type,baseQty:_toBase(p.qty,p.unit,type),ids:[it.id],sources:[it]});
+    else{const m=map.get(key);m.baseQty+=_toBase(p.qty,p.unit,type);m.ids.push(it.id);m.sources.push(it);}
+  }
+  return[...map.values()];
+}
+
 const AISLES=[
   {name:"🥦 Produce",words:["apple","apples","banana","bananas","lemon","lemons","lime","orange","grape","tomato","tomatoes","potato","potatoes","onion","onions","garlic","carrot","carrots","celery","broccoli","spinach","lettuce","salad","capsicum","pepper","cucumber","zucchini","avocado","mushroom","mushrooms","ginger","herbs","basil","parsley","coriander","mint","rosemary","thyme","bay","spring onion","shallot","shallots","kale","corn","peas","bean","beans","asparagus","eggplant","cauliflower","leek","pumpkin","squash","sweet potato","beetroot","radish","fennel"]},
   {name:"🥩 Meat & Seafood",words:["chicken","beef","pork","lamb","mince","steak","bacon","ham","sausage","chorizo","prawn","prawns","fish","salmon","tuna","shrimp","seafood","turkey","duck","veal","brisket","rib","ribs","fillet","breast","thigh","wing","cutlet","schnitzel","meatball","anchovy","anchovies","scallop","crab","lobster","squid","calamari"]},
@@ -1367,10 +1416,13 @@ function GroceryTab(){
   const[items,setItems]=useState(()=>load(KEYS.g));
   const[manualInput,setManualInput]=useState("");
   const[groupBy,setGroupBy]=useState("aisle");
+  const[unitOv,setUnitOv]=useState({}); // {mergeKey: unitString}
 
   function setAndSave(fn){setItems(prev=>{const next=typeof fn==="function"?fn(prev):fn;save(KEYS.g,next);return next;});}
   function toggle(id){setAndSave(is=>is.map(i=>i.id===id?{...i,checked:!i.checked}:i));}
+  function toggleMany(ids){setAndSave(is=>is.map(i=>ids.includes(i.id)?{...i,checked:true}:i));}
   function remove(id){setAndSave(is=>is.filter(i=>i.id!==id));}
+  function removeMany(ids){setAndSave(is=>is.filter(i=>!ids.includes(i.id)));}
   function addManual(){
     if(!manualInput.trim())return;
     setAndSave(is=>[...is,{id:Date.now().toString()+Math.random(),text:manualInput.trim(),recipe:"Added manually",checked:false}]);
@@ -1383,18 +1435,26 @@ function GroceryTab(){
     if(navigator.share){await navigator.share({title:"Grocery List",text}).catch(()=>{});}
     else{await navigator.clipboard.writeText(text).catch(()=>{});alert("Copied to clipboard!");}
   }
+  function cycleUnit(key,type,currentUnit){
+    setUnitOv(ov=>({...ov,[key]:_nextUnit(currentUnit,type)}));
+  }
 
   const unchecked=items.filter(i=>!i.checked);
   const checked=items.filter(i=>i.checked);
+  const aisleOrder=[...AISLES.map(a=>a.name),OTHER_AISLE];
+
+  // Build groups
   const groups={};
   if(groupBy==="aisle"){
-    // Sort by aisle order defined in AISLES array
-    for(const item of unchecked){const g=getAisle(item.text);if(!groups[g])groups[g]=[];groups[g].push(item);}
+    const merged=_mergeItems(unchecked);
+    for(const m of merged){
+      const g=getAisle(m.name||m.sources[0]?.text||'');
+      if(!groups[g])groups[g]=[];
+      groups[g].push(m);
+    }
   } else {
-    for(const item of unchecked){const g=item.recipe||"Other";if(!groups[g])groups[g]=[];groups[g].push(item);}
+    for(const item of unchecked){const g=item.recipe||"Other";if(!groups[g])groups[g]=[];groups[g].push({key:item.id,name:'',type:'count',baseQty:1,ids:[item.id],sources:[item]});}
   }
-  // Sort aisle groups by canonical order
-  const aisleOrder=[...AISLES.map(a=>a.name),OTHER_AISLE];
   const sortedGroupKeys=Object.keys(groups).sort((a,b)=>{const ai=aisleOrder.indexOf(a),bi=aisleOrder.indexOf(b);return(ai<0?999:ai)-(bi<0?999:bi);});
 
   return(
@@ -1420,18 +1480,37 @@ function GroceryTab(){
           <button onClick={addManual} className="btn-primary" style={{padding:"0 16px",borderRadius:12,fontSize:18}}>+</button>
         </div>
 
-        {sortedGroupKeys.map(recipe=>{const its=groups[recipe];return(
-          <div key={recipe} style={{marginBottom:14}}>
-            <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.07em",textTransform:"uppercase",marginBottom:8}}>{recipe}</div>
-            {its.map(item=>(
-              <div key={item.id} style={{display:"flex",alignItems:"center",gap:12,padding:"9px 0",borderBottom:"1px solid var(--sage-pale)"}}>
-                <button onClick={()=>toggle(item.id)} style={{width:22,height:22,borderRadius:"50%",border:"2px solid var(--sage)",background:"none",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
-                  {item.checked&&<div style={{width:10,height:10,borderRadius:"50%",background:"var(--moss)"}}/>}
-                </button>
-                <span style={{fontSize:14,color:"var(--ink)",flex:1,lineHeight:1.5}}>{item.text}</span>
-                <button onClick={()=>remove(item.id)} style={{background:"none",border:"none",color:"var(--sage-lt)",fontSize:18,cursor:"pointer",lineHeight:1}}>×</button>
-              </div>
-            ))}
+        {sortedGroupKeys.map(grp=>{const its=groups[grp];return(
+          <div key={grp} style={{marginBottom:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.07em",textTransform:"uppercase",marginBottom:8}}>{grp}</div>
+            {its.map(m=>{
+              const isMerged=groupBy==="aisle";
+              const src=m.sources[0];
+              const {qty,unit}=isMerged&&m.baseQty>0?_display(m.baseQty,m.type,unitOv[m.key]):({qty:'',unit:''});
+              const displayName=isMerged?(m.name||src?.text||''):(src?.text||'');
+              const displayText=isMerged?`${qty?qty+' ':''}`:``;
+              const merged=m.sources.length>1;
+              return(
+                <div key={m.key} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:"1px solid var(--sage-pale)"}}>
+                  <button onClick={()=>isMerged?toggleMany(m.ids):toggle(src.id)}
+                    style={{width:22,height:22,borderRadius:"50%",border:"2px solid var(--sage)",background:"none",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
+                  </button>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                      {qty&&<span style={{fontSize:14,fontWeight:700,color:"var(--forest)"}}>{qty}</span>}
+                      {unit&&<button onClick={()=>cycleUnit(m.key,m.type,unit)}
+                        title="Tap to change unit"
+                        style={{fontSize:11,fontWeight:700,background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:10,padding:"1px 7px",cursor:"pointer",color:"var(--moss)",flexShrink:0}}>
+                        {unit} ↕
+                      </button>}
+                      <span style={{fontSize:14,color:"var(--ink)"}}>{displayName||src?.text}</span>
+                    </div>
+                    {merged&&<div style={{fontSize:11,color:"var(--mist)",marginTop:2}}>from {m.sources.map(s=>s.recipe).filter((v,i,a)=>a.indexOf(v)===i).join(', ')}</div>}
+                  </div>
+                  <button onClick={()=>isMerged?removeMany(m.ids):remove(src.id)} style={{background:"none",border:"none",color:"var(--sage-lt)",fontSize:18,cursor:"pointer",lineHeight:1,flexShrink:0}}>×</button>
+                </div>
+              );
+            })}
           </div>
         );})}
 

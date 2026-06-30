@@ -657,7 +657,7 @@ function RecipeModal({recipe,onClose,onUpdate}){
 }
 
 // ─── Add sheet with photo import ──────────────────────────────────────────────
-function AddSheet({onAdd,onClose,prefill="",recipes=[]}){
+function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
   const[tab,setTab]=useState(prefill?"paste":"paste");
   const[input,setInput]=useState(prefill);
   const[loading,setLoading]=useState(false);
@@ -695,7 +695,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[]}){
       const ogImage = data.ogImage || (imageBase64 ? `data:${imageMediaType};base64,${imageBase64}` : "");
       onAdd({id:Date.now().toString(),...data.recipe,ogImage,url:text.startsWith("http")?text:"",savedAt:Date.now()});
       onClose();
-    }catch{setError("Couldn't parse — try manual entry.");}
+    }catch{setError("Couldn't parse — try manual entry.");if(onFail)onFail();}
     finally{setLoading(false);}
   }
 
@@ -861,7 +861,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[]}){
 }
 
 // ─── RECIPES TAB ──────────────────────────────────────────────────────────────
-function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared}){
+function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared,onImportFail,onRefresh}){
   const[search,setSearch]=useState("");
   const[tag,setTag]=useState("");
   const[showFavs,setShowFavs]=useState(false);
@@ -870,7 +870,28 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared})
   const[sort,setSort]=useState("newest");
   const[showMake,setShowMake]=useState(false);
   const[makeInput,setMakeInput]=useState("");
+  const[pullY,setPullY]=useState(0);
+  const[refreshing,setRefreshing]=useState(false);
+  const pullRef=useRef({startY:0,pulling:false});
+  const scrollRef=useRef(null);
   useEffect(()=>{ if(sharedPrefill)setShowAdd(true); },[sharedPrefill]);
+
+  function onTouchStart(e){
+    if(scrollRef.current?.scrollTop===0){pullRef.current={startY:e.touches[0].clientY,pulling:true};}
+  }
+  function onTouchMove(e){
+    if(!pullRef.current.pulling)return;
+    const dy=e.touches[0].clientY-pullRef.current.startY;
+    if(dy>0){setPullY(Math.min(dy*0.4,60));}else{pullRef.current.pulling=false;setPullY(0);}
+  }
+  async function onTouchEnd(){
+    if(pullY>=50&&onRefresh&&!refreshing){
+      setRefreshing(true);setPullY(0);
+      await onRefresh();
+      setRefreshing(false);
+    } else {setPullY(0);}
+    pullRef.current.pulling=false;
+  }
 
   function exportRecipes(){
     const blob=new Blob([JSON.stringify(recipes,null,2)],{type:"application/json"});
@@ -885,6 +906,7 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared})
     const matchFav=!showFavs||r.fav;
     return matchQ&&matchTag&&matchFav;
   });
+  if(sort==="newest") filtered=[...filtered].sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
   if(sort==="az") filtered=[...filtered].sort((a,b)=>(a.title||"").localeCompare(b.title||""));
   if(sort==="calories") filtered=[...filtered].sort((a,b)=>(a.nutrition?.calories||0)-(b.nutrition?.calories||0));
 
@@ -897,7 +919,13 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared})
   }).filter(r=>r._score>0).sort((a,b)=>b._score-a._score):[];
 
   return(
-    <div style={{flex:1,overflowY:"auto",paddingBottom:90}}>
+    <div ref={scrollRef} style={{flex:1,overflowY:"auto",paddingBottom:90,overscrollBehavior:"none"}}
+      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
+      {(pullY>0||refreshing)&&(
+        <div style={{textAlign:"center",padding:"8px 0",fontSize:13,color:"var(--moss)",fontWeight:600,transition:"opacity .2s"}}>
+          {refreshing?"🔄 Refreshing…":pullY>=50?"↑ Release to refresh":"↓ Pull to refresh"}
+        </div>
+      )}
       {/* Search bar */}
       <div style={{padding:"14px 16px 0",display:"flex",gap:8}}>
         <div style={{flex:1,position:"relative"}}>
@@ -924,7 +952,6 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared})
           <button key={t} onClick={()=>{setTag(t===tag?"":t);setShowFavs(false);}} style={{flexShrink:0,background:t===tag?"var(--forest)":"var(--cream)",color:t===tag?"#fff":"var(--ink)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"4px 13px",fontSize:11,fontWeight:700,cursor:"pointer",textTransform:"uppercase",letterSpacing:"0.04em",transition:"all .15s",boxShadow:t===tag?"var(--sh-xs)":"none"}}>{t}</button>
         ))}
         {(tag||showFavs)&&<button onClick={()=>{setTag("");setShowFavs(false);}} style={{flexShrink:0,background:"#FEE2E2",color:"#991B1B",border:"1px solid #FECACA",borderRadius:20,padding:"4px 11px",fontSize:11,fontWeight:700,cursor:"pointer"}}>✕ Clear</button>}
-        {recipes.length>0&&<button onClick={exportRecipes} style={{flexShrink:0,background:"var(--cream)",color:"var(--dust)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"4px 11px",fontSize:11,fontWeight:700,cursor:"pointer",marginLeft:"auto"}}>⬇ Export</button>}
       </div>
 
       {/* List */}
@@ -974,53 +1001,65 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared})
         </Sheet>
       )}
 
-      {showAdd&&<AddSheet onAdd={r=>{onAdd(r);setShowAdd(false);clearShared();}} onClose={()=>{setShowAdd(false);clearShared();}} prefill={sharedPrefill} recipes={recipes}/>}
+      {showAdd&&<AddSheet onAdd={r=>{onAdd(r);setShowAdd(false);clearShared();}} onClose={()=>{setShowAdd(false);clearShared();}} prefill={sharedPrefill} recipes={recipes} onFail={onImportFail}/>}
       <RecipeModal recipe={selected} onClose={()=>setSelected(null)} onUpdate={r=>{onUpdate(r);setSelected(r);}}/>
     </div>
   );
 }
 
-// ─── CATEGORIES TAB ───────────────────────────────────────────────────────────
-function CategoriesTab({recipes,categories,setCategories,onUpdate}){
+// ─── COOKBOOKS TAB (replaces Categories) ─────────────────────────────────────
+const BOOK_EMOJIS=["📗","📘","📙","📕","📒","📔","🍳","🥘","🍜","🥗","🍱","🧆","🥩","🥦","🌮","🍰","🎂","🫕"];
+function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate}){
   const[showNew,setShowNew]=useState(false);
   const[newName,setNewName]=useState("");
-  const[newColor,setNewColor]=useState(CAT_COLORS[0]);
+  const[newEmoji,setNewEmoji]=useState(BOOK_EMOJIS[0]);
   const[selected,setSelected]=useState(null);
   const[addingTo,setAddingTo]=useState(null);
   const[recipeModal,setRecipeModal]=useState(null);
+  const[sharing,setSharing]=useState(null);
 
-  function createCat(){if(!newName.trim())return;const u=[...categories,{id:Date.now().toString(),name:newName.trim(),color:newColor,recipeIds:[]}];setCategories(u);save(KEYS.c,u);setNewName("");setShowNew(false);}
-  function deleteCat(id){const u=categories.filter(c=>c.id!==id);setCategories(u);save(KEYS.c,u);if(selected===id)setSelected(null);}
-  function addToCat(catId,recipeId){const u=categories.map(c=>c.id===catId?{...c,recipeIds:[...new Set([...(c.recipeIds||[]),recipeId])]}:c);setCategories(u);save(KEYS.c,u);setAddingTo(null);}
-  function removeFromCat(catId,recipeId){const u=categories.map(c=>c.id===catId?{...c,recipeIds:(c.recipeIds||[]).filter(id=>id!==recipeId)}:c);setCategories(u);save(KEYS.c,u);}
+  function createBook(){if(!newName.trim())return;const u=[...books,{id:Date.now().toString(),name:newName.trim(),color:CAT_COLORS[books.length%CAT_COLORS.length],emoji:newEmoji,recipeIds:[]}];setBooks(u);save(KEYS.c,u);setNewName("");setShowNew(false);}
+  function deleteBook(id){const u=books.filter(c=>c.id!==id);setBooks(u);save(KEYS.c,u);if(selected===id)setSelected(null);}
+  function addToBook(bookId,recipeId){const u=books.map(c=>c.id===bookId?{...c,recipeIds:[...new Set([...(c.recipeIds||[]),recipeId])]}:c);setBooks(u);save(KEYS.c,u);setAddingTo(null);}
+  function removeFromBook(bookId,recipeId){const u=books.map(c=>c.id===bookId?{...c,recipeIds:(c.recipeIds||[]).filter(id=>id!==recipeId)}:c);setBooks(u);save(KEYS.c,u);}
 
-  const cat=categories.find(c=>c.id===selected);
-  const catRecipes=cat?(cat.recipeIds||[]).map(id=>recipes.find(r=>r.id===id)).filter(Boolean):[];
-  const notInCat=cat?recipes.filter(r=>!(cat.recipeIds||[]).includes(r.id)):[];
+  async function shareBook(book){
+    const bookRecipes=(book.recipeIds||[]).map(id=>recipes.find(r=>r.id===id)).filter(Boolean);
+    const payload={name:book.name,emoji:book.emoji||"📗",recipes:bookRecipes};
+    const text=`${book.emoji||"📗"} ${book.name}\n\n${bookRecipes.map(r=>`• ${r.title}`).join("\n")}`;
+    if(navigator.share){await navigator.share({title:book.name,text}).catch(()=>{});}
+    else{await navigator.clipboard.writeText(text).catch(()=>{});alert("Cookbook list copied to clipboard!");}
+  }
+
+  const book=books.find(c=>c.id===selected);
+  const bookRecipes=book?(book.recipeIds||[]).map(id=>recipes.find(r=>r.id===id)).filter(Boolean):[];
+  const notInBook=book?recipes.filter(r=>!(book.recipeIds||[]).includes(r.id)):[];
   const inp={background:"var(--cream)",border:"1.5px solid var(--parchment)",borderRadius:"var(--r-md)",padding:"11px 14px",fontSize:14,outline:"none",color:"var(--ink)",width:"100%"};
 
-  if(selected&&cat) return(
+  if(selected&&book) return(
     <div style={{flex:1,overflowY:"auto",paddingBottom:90}}>
+      {/* Book header */}
       <div style={{padding:"12px 16px 10px",display:"flex",alignItems:"center",gap:10}}>
         <button onClick={()=>setSelected(null)} className="btn-ghost" style={{padding:"7px 13px",fontSize:13}}>← Back</button>
-        <div style={{width:14,height:14,borderRadius:"50%",background:cat.color,flexShrink:0}}/>
-        <span className="serif" style={{fontWeight:600,fontSize:19,color:"var(--forest)"}}>{cat.name}</span>
-        <span style={{fontSize:12,color:"var(--mist)",marginLeft:"auto"}}>{catRecipes.length} recipes</span>
+        <span style={{fontSize:22}}>{book.emoji||"📗"}</span>
+        <span className="serif" style={{fontWeight:600,fontSize:19,color:"var(--forest)",flex:1}}>{book.name}</span>
+        <button onClick={()=>shareBook(book)} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>📤 Share</button>
       </div>
+      <div style={{padding:"0 16px 6px",fontSize:12,color:"var(--mist)"}}>{bookRecipes.length} recipe{bookRecipes.length!==1?"s":""}</div>
       <div style={{padding:"4px 16px"}}>
-        {catRecipes.map(r=><MiniCard key={r.id} recipe={r} onOpen={setRecipeModal} onRemove={()=>removeFromCat(cat.id,r.id)}/>)}
-        {catRecipes.length===0&&<div style={{textAlign:"center",paddingTop:50,color:"var(--mist)",fontSize:14}}>No recipes yet — add some below</div>}
+        {bookRecipes.map(r=><MiniCard key={r.id} recipe={r} onOpen={setRecipeModal} onRemove={()=>removeFromBook(book.id,r.id)}/>)}
+        {bookRecipes.length===0&&<div style={{textAlign:"center",paddingTop:50,color:"var(--mist)",fontSize:14}}>No recipes yet — add some below</div>}
       </div>
       <div style={{padding:"12px 16px 0"}}>
-        <button onClick={()=>setAddingTo(cat.id)} className="btn-ghost" style={{width:"100%",padding:"13px 0",fontSize:14,borderRadius:"var(--r-md)"}}>+ Add recipes to {cat.name}</button>
+        <button onClick={()=>setAddingTo(book.id)} className="btn-ghost" style={{width:"100%",padding:"13px 0",fontSize:14,borderRadius:"var(--r-md)"}}>+ Add recipes to {book.name}</button>
       </div>
       {addingTo&&(
         <Sheet onClose={()=>setAddingTo(null)}>
           <div style={{padding:"14px 18px 24px"}}>
-            <div className="serif" style={{fontWeight:600,fontSize:20,color:"var(--forest)",marginBottom:14}}>Add to {cat.name}</div>
-            {notInCat.length===0?<div style={{color:"var(--mist)",fontSize:14,textAlign:"center",padding:"20px 0"}}>All recipes already in this category.</div>
-            :notInCat.map(r=>(
-              <div key={r.id} onClick={()=>addToCat(cat.id,r.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 0",borderBottom:"1px solid var(--parchment)",cursor:"pointer"}}>
+            <div className="serif" style={{fontWeight:600,fontSize:20,color:"var(--forest)",marginBottom:14}}>Add to {book.name}</div>
+            {notInBook.length===0?<div style={{color:"var(--mist)",fontSize:14,textAlign:"center",padding:"20px 0"}}>All recipes already in this cookbook.</div>
+            :notInBook.map(r=>(
+              <div key={r.id} onClick={()=>addToBook(book.id,r.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 0",borderBottom:"1px solid var(--parchment)",cursor:"pointer"}}>
                 <div style={{width:50,height:50,borderRadius:12,overflow:"hidden",flexShrink:0}}><RImg recipe={r} style={{width:"100%",height:"100%"}}/></div>
                 <div style={{flex:1}}>
                   <div style={{fontWeight:600,fontSize:14,color:"var(--forest)"}}>{r.title}</div>
@@ -1038,52 +1077,62 @@ function CategoriesTab({recipes,categories,setCategories,onUpdate}){
 
   return(
     <div style={{flex:1,overflowY:"auto",paddingBottom:90}}>
-      {/* Mosaic grid */}
-      <div style={{padding:"12px 16px 0",display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        {categories.length===0&&(
-          <div style={{gridColumn:"1/-1",textAlign:"center",paddingTop:70}}>
-            <div style={{fontSize:52,marginBottom:14}}>📂</div>
-            <div className="serif" style={{fontWeight:600,fontSize:22,color:"var(--forest)",marginBottom:8}}>No categories yet</div>
+      <div style={{padding:"16px 16px 4px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div className="serif" style={{fontWeight:600,fontSize:22,color:"var(--forest)"}}>Cookbooks</div>
+        <span style={{fontSize:12,color:"var(--mist)"}}>{books.length} book{books.length!==1?"s":""}</span>
+      </div>
+      {/* List */}
+      <div style={{padding:"8px 16px 0",display:"flex",flexDirection:"column",gap:10}}>
+        {books.length===0&&(
+          <div style={{textAlign:"center",paddingTop:60}}>
+            <div style={{fontSize:52,marginBottom:14}}>📗</div>
+            <div className="serif" style={{fontWeight:600,fontSize:22,color:"var(--forest)",marginBottom:8}}>No cookbooks yet</div>
             <div style={{fontSize:14,color:"var(--mist)",lineHeight:1.75}}>Create collections like<br/>"Weeknight Dinners" or "Batch Cook"</div>
           </div>
         )}
-        {categories.map(cat=>{
-          const catRecs=(cat.recipeIds||[]).map(id=>recipes.find(r=>r.id===id)).filter(Boolean).slice(0,4);
+        {books.map(bk=>{
+          const bkRecs=(bk.recipeIds||[]).map(id=>recipes.find(r=>r.id===id)).filter(Boolean);
+          const coverRecipes=bkRecs.slice(0,3);
           return(
-            <div key={cat.id} onClick={()=>setSelected(cat.id)} style={{background:"var(--cream)",borderRadius:"var(--r-lg)",border:"1px solid rgba(255,255,255,.85)",boxShadow:"var(--sh-sm)",overflow:"hidden",cursor:"pointer",transition:"transform .18s, box-shadow .18s",position:"relative"}}
-              onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="var(--sh-md)";}}
+            <div key={bk.id} onClick={()=>setSelected(bk.id)}
+              style={{display:"flex",alignItems:"center",gap:14,background:"var(--cream)",borderRadius:"var(--r-lg)",border:"1px solid var(--parchment)",boxShadow:"var(--sh-sm)",padding:"12px 14px",cursor:"pointer",position:"relative",transition:"transform .15s,box-shadow .15s"}}
+              onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="var(--sh-md)";}}
               onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="var(--sh-sm)";}}>
-              {/* 4-photo mosaic */}
-              <div style={{height:100,display:"grid",gridTemplateColumns:"1fr 1fr",gridTemplateRows:"1fr 1fr",gap:1}}>
-                {[0,1,2,3].map(i=>(
-                  <div key={i} style={{overflow:"hidden",background:i===0?cat.color:"var(--parchment)"}}>
-                    {catRecs[i]?<RImg recipe={catRecs[i]} style={{width:"100%",height:"100%"}}/>:<div style={{width:"100%",height:"100%",background:cat.color,opacity:0.15+i*0.05}}/>}
+              {/* Stacked covers */}
+              <div style={{position:"relative",width:64,height:64,flexShrink:0}}>
+                {[2,1,0].map(i=>(
+                  <div key={i} style={{position:"absolute",borderRadius:10,overflow:"hidden",width:50,height:50,top:i*4,left:i*4,boxShadow:"var(--sh-xs)",background:bk.color||"var(--sage-pale)"}}>
+                    {coverRecipes[2-i]?<RImg recipe={coverRecipes[2-i]} style={{width:"100%",height:"100%"}}/>:<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>{bk.emoji||"📗"}</div>}
                   </div>
                 ))}
               </div>
-              <div style={{padding:"10px 12px 12px",position:"relative"}}>
-                <div style={{fontWeight:700,fontSize:14,color:"var(--forest)"}}>{cat.name}</div>
-                <div style={{fontSize:11,color:"var(--mist)",marginTop:2}}>{(cat.recipeIds||[]).length} recipe{(cat.recipeIds||[]).length!==1?"s":""}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:3}}>
+                  <span style={{fontSize:18}}>{bk.emoji||"📗"}</span>
+                  <span style={{fontWeight:700,fontSize:15,color:"var(--forest)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bk.name}</span>
+                </div>
+                <div style={{fontSize:12,color:"var(--mist)"}}>{bkRecs.length} recipe{bkRecs.length!==1?"s":""}</div>
+                {bkRecs.length>0&&<div style={{fontSize:11,color:"var(--dust)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bkRecs.slice(0,3).map(r=>r.title).join(" · ")}</div>}
               </div>
-              <button onClick={e=>{e.stopPropagation();deleteCat(cat.id);}} style={{position:"absolute",top:8,right:8,background:"rgba(15,24,17,.45)",border:"none",color:"#fff",borderRadius:"50%",width:22,height:22,fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+              <button onClick={e=>{e.stopPropagation();if(confirm(`Delete "${bk.name}"?`))deleteBook(bk.id);}} style={{background:"none",border:"none",color:"var(--mist)",fontSize:18,cursor:"pointer",flexShrink:0,lineHeight:1}}>×</button>
             </div>
           );
         })}
       </div>
-      <div style={{padding:"14px 16px 0"}}>
-        <button onClick={()=>setShowNew(true)} className="btn-primary" style={{width:"100%",padding:"13px 0",fontSize:14,borderRadius:"var(--r-md)"}}>+ New Category</button>
+      <div style={{padding:"16px 16px 0"}}>
+        <button onClick={()=>setShowNew(true)} className="btn-primary" style={{width:"100%",padding:"13px 0",fontSize:14,borderRadius:"var(--r-md)"}}>+ New Cookbook</button>
       </div>
       {showNew&&(
         <Sheet onClose={()=>setShowNew(false)}>
           <div style={{padding:"14px 18px 24px"}}>
-            <div className="serif" style={{fontWeight:600,fontSize:22,color:"var(--forest)",marginBottom:16}}>New Category</div>
+            <div className="serif" style={{fontWeight:600,fontSize:22,color:"var(--forest)",marginBottom:16}}>New Cookbook</div>
             <label style={{fontSize:12,fontWeight:600,color:"var(--mist)",display:"block",marginBottom:4}}>Name</label>
-            <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="e.g. Weeknight Dinners" style={{...inp,marginBottom:14}} autoFocus/>
-            <label style={{fontSize:12,fontWeight:600,color:"var(--mist)",display:"block",marginBottom:8}}>Colour</label>
-            <div style={{display:"flex",gap:10,marginBottom:22,flexWrap:"wrap"}}>
-              {CAT_COLORS.map(c=><button key={c} onClick={()=>setNewColor(c)} style={{width:36,height:36,borderRadius:"50%",background:c,border:newColor===c?"3px solid var(--forest)":"3px solid transparent",cursor:"pointer",boxShadow:newColor===c?"var(--sh-sm)":"none",transition:"all .15s"}}/>)}
+            <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="e.g. Weeknight Dinners" style={{...inp,marginBottom:16}} autoFocus/>
+            <label style={{fontSize:12,fontWeight:600,color:"var(--mist)",display:"block",marginBottom:8}}>Icon</label>
+            <div style={{display:"flex",gap:8,marginBottom:22,flexWrap:"wrap"}}>
+              {BOOK_EMOJIS.map(em=><button key={em} onClick={()=>setNewEmoji(em)} style={{width:38,height:38,borderRadius:10,border:newEmoji===em?"2.5px solid var(--forest)":"1.5px solid var(--parchment)",background:newEmoji===em?"var(--sage-pale)":"transparent",fontSize:22,cursor:"pointer",transition:"all .12s"}}>{em}</button>)}
             </div>
-            <button onClick={createCat} disabled={!newName.trim()} className="btn-primary" style={{width:"100%",padding:"13px 0",fontSize:15,borderRadius:"var(--r-md)",opacity:newName.trim()?1:.6}}>Create Category</button>
+            <button onClick={createBook} disabled={!newName.trim()} className="btn-primary" style={{width:"100%",padding:"13px 0",fontSize:15,borderRadius:"var(--r-md)",opacity:newName.trim()?1:.6}}>Create Cookbook</button>
           </div>
         </Sheet>
       )}
@@ -1297,9 +1346,27 @@ function GrocerySheet({items:initItems,onClose,onRefresh}){
 }
 
 // ─── GROCERY TAB ──────────────────────────────────────────────────────────────
+const AISLES=[
+  {name:"🥦 Produce",words:["apple","apples","banana","bananas","lemon","lemons","lime","orange","grape","tomato","tomatoes","potato","potatoes","onion","onions","garlic","carrot","carrots","celery","broccoli","spinach","lettuce","salad","capsicum","pepper","cucumber","zucchini","avocado","mushroom","mushrooms","ginger","herbs","basil","parsley","coriander","mint","rosemary","thyme","bay","spring onion","shallot","shallots","kale","corn","peas","bean","beans","asparagus","eggplant","cauliflower","leek","pumpkin","squash","sweet potato","beetroot","radish","fennel"]},
+  {name:"🥩 Meat & Seafood",words:["chicken","beef","pork","lamb","mince","steak","bacon","ham","sausage","chorizo","prawn","prawns","fish","salmon","tuna","shrimp","seafood","turkey","duck","veal","brisket","rib","ribs","fillet","breast","thigh","wing","cutlet","schnitzel","meatball","anchovy","anchovies","scallop","crab","lobster","squid","calamari"]},
+  {name:"🥛 Dairy & Eggs",words:["milk","cream","butter","cheese","yoghurt","yogurt","egg","eggs","parmesan","mozzarella","cheddar","feta","ricotta","brie","halloumi","sour cream","cream cheese","condensed milk","evaporated milk","ghee"]},
+  {name:"🍞 Bakery & Bread",words:["bread","sourdough","baguette","roll","rolls","pita","tortilla","wrap","croissant","bagel","muffin","bun","loaf","crouton","breadcrumb","breadcrumbs"]},
+  {name:"🥫 Pantry & Canned",words:["flour","sugar","salt","pepper","oil","olive oil","vinegar","soy sauce","sauce","stock","broth","pasta","rice","noodle","noodles","lentil","lentils","chickpea","chickpeas","can","canned","tomato paste","coconut milk","coconut cream","honey","syrup","jam","peanut butter","nutella","oats","cereal","biscuit","cracker","cornstarch","baking powder","baking soda","yeast","vanilla","cocoa","chocolate","mustard","ketchup","mayonnaise","relish","chutney","curry paste","hoisin","oyster sauce","fish sauce","worcestershire","tabasco","sriracha","harissa"]},
+  {name:"🧊 Frozen",words:["frozen","ice cream","gelato","sorbet","popsicle","fish fingers","frozen peas","frozen corn","frozen berries","pastry","puff pastry","shortcrust"]},
+  {name:"🧃 Drinks & Beverages",words:["water","juice","wine","beer","coffee","tea","milk","soda","sparkling","mineral water","stock","broth"]},
+  {name:"🧂 Spices & Condiments",words:["cumin","paprika","turmeric","cinnamon","cayenne","chilli","chili","oregano","sage","cardamom","nutmeg","cloves","coriander seed","fennel seed","star anise","allspice","curry powder","garam masala","sumac","za'atar","dried","spice","seasoning","dressing","marinade"]},
+];
+const OTHER_AISLE="🛒 Other";
+function getAisle(text){
+  const t=text.toLowerCase();
+  for(const a of AISLES){if(a.words.some(w=>t.includes(w)))return a.name;}
+  return OTHER_AISLE;
+}
+
 function GroceryTab(){
   const[items,setItems]=useState(()=>load(KEYS.g));
   const[manualInput,setManualInput]=useState("");
+  const[groupBy,setGroupBy]=useState("aisle");
 
   function setAndSave(fn){setItems(prev=>{const next=typeof fn==="function"?fn(prev):fn;save(KEYS.g,next);return next;});}
   function toggle(id){setAndSave(is=>is.map(i=>i.id===id?{...i,checked:!i.checked}:i));}
@@ -1320,7 +1387,15 @@ function GroceryTab(){
   const unchecked=items.filter(i=>!i.checked);
   const checked=items.filter(i=>i.checked);
   const groups={};
-  for(const item of unchecked){const g=item.recipe||"Other";if(!groups[g])groups[g]=[];groups[g].push(item);}
+  if(groupBy==="aisle"){
+    // Sort by aisle order defined in AISLES array
+    for(const item of unchecked){const g=getAisle(item.text);if(!groups[g])groups[g]=[];groups[g].push(item);}
+  } else {
+    for(const item of unchecked){const g=item.recipe||"Other";if(!groups[g])groups[g]=[];groups[g].push(item);}
+  }
+  // Sort aisle groups by canonical order
+  const aisleOrder=[...AISLES.map(a=>a.name),OTHER_AISLE];
+  const sortedGroupKeys=Object.keys(groups).sort((a,b)=>{const ai=aisleOrder.indexOf(a),bi=aisleOrder.indexOf(b);return(ai<0?999:ai)-(bi<0?999:bi);});
 
   return(
     <div style={{flex:1,overflowY:"auto",paddingBottom:90}}>
@@ -1334,14 +1409,18 @@ function GroceryTab(){
             {items.length>0&&<button onClick={clearAll} style={{background:"#FEE2E2",border:"1px solid #FECACA",borderRadius:20,padding:"4px 11px",fontSize:11,fontWeight:700,cursor:"pointer",color:"#991B1B"}}>Clear all</button>}
           </div>
         </div>
+        <div style={{display:"flex",gap:6,marginBottom:10}}>
+          <button onClick={()=>setGroupBy("aisle")} style={{borderRadius:20,border:"1px solid var(--sage-lt)",padding:"3px 12px",fontSize:11,fontWeight:700,cursor:"pointer",background:groupBy==="aisle"?"var(--forest)":"var(--cream)",color:groupBy==="aisle"?"#fff":"var(--ink)"}}>🛒 By Aisle</button>
+          <button onClick={()=>setGroupBy("recipe")} style={{borderRadius:20,border:"1px solid var(--sage-lt)",padding:"3px 12px",fontSize:11,fontWeight:700,cursor:"pointer",background:groupBy==="recipe"?"var(--forest)":"var(--cream)",color:groupBy==="recipe"?"#fff":"var(--ink)"}}>📋 By Recipe</button>
+        </div>
 
-        <div style={{display:"flex",gap:8,marginTop:12,marginBottom:16}}>
+        <div style={{display:"flex",gap:8,marginTop:4,marginBottom:16}}>
           <input value={manualInput} onChange={e=>setManualInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addManual()} placeholder="Add item…"
             style={{flex:1,background:"var(--cream)",border:"1.5px solid var(--parchment)",borderRadius:12,padding:"9px 13px",fontSize:14,outline:"none",color:"var(--ink)"}}/>
           <button onClick={addManual} className="btn-primary" style={{padding:"0 16px",borderRadius:12,fontSize:18}}>+</button>
         </div>
 
-        {Object.entries(groups).map(([recipe,its])=>(
+        {sortedGroupKeys.map(recipe=>{const its=groups[recipe];return(
           <div key={recipe} style={{marginBottom:14}}>
             <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.07em",textTransform:"uppercase",marginBottom:8}}>{recipe}</div>
             {its.map(item=>(
@@ -1354,7 +1433,7 @@ function GroceryTab(){
               </div>
             ))}
           </div>
-        ))}
+        );})}
 
         {checked.length>0&&(
           <div style={{marginTop:16}}>
@@ -1376,9 +1455,31 @@ function GroceryTab(){
 }
 
 // ─── SETTINGS TAB ─────────────────────────────────────────────────────────────
-function SettingsTab({session,onSignIn,onSignOut,syncStatus}){
+function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport}){
   const[dark,setDark]=useState(()=>{try{return localStorage.getItem(KEYS.t)==="dark";}catch{return false;}});
   const[signingIn,setSigningIn]=useState(false);
+  const importRef=useRef(null);
+
+  function exportRecipes(){
+    const blob=new Blob([JSON.stringify(recipes,null,2)],{type:"application/json"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="fork-n-pantry-recipes.json";a.click();URL.revokeObjectURL(a.href);
+  }
+  function handleImportFile(e){
+    const file=e.target.files?.[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const data=JSON.parse(ev.target.result);
+        const arr=Array.isArray(data)?data:[data];
+        const valid=arr.filter(r=>r&&r.title);
+        if(!valid.length){alert("No valid recipes found in file.");return;}
+        onImport(valid);
+        alert(`${valid.length} recipe${valid.length!==1?"s":""} imported!`);
+      }catch{alert("Couldn't read file — make sure it's a Fork n Pantry JSON export.");}
+    };
+    reader.readAsText(file);
+    e.target.value="";
+  }
 
   function toggleDark(){
     const next=!dark;setDark(next);
@@ -1460,6 +1561,26 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus}){
           </div>
         </div>
 
+        {/* Data */}
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4,paddingBottom:6,borderBottom:"1.5px solid var(--parchment)"}}>Data</div>
+          <input ref={importRef} type="file" accept=".json" onChange={handleImportFile} style={{display:"none"}}/>
+          <div style={row}>
+            <div>
+              <div style={label}>Export Recipes</div>
+              <div style={sub}>Download all recipes as a JSON backup</div>
+            </div>
+            <button onClick={exportRecipes} disabled={!recipes.length} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:recipes.length?"pointer":"default",color:"var(--moss)",opacity:recipes.length?1:0.5}}>⬇ Export</button>
+          </div>
+          <div style={row}>
+            <div>
+              <div style={label}>Import Recipes</div>
+              <div style={sub}>Restore from a JSON backup file</div>
+            </div>
+            <button onClick={()=>importRef.current?.click()} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>⬆ Import</button>
+          </div>
+        </div>
+
         {/* About */}
         <div style={{marginBottom:20}}>
           <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4,paddingBottom:6,borderBottom:"1.5px solid var(--parchment)"}}>About</div>
@@ -1490,13 +1611,17 @@ function ScanTab({recipes=[],onOpenRecipe}){
   // Uses whole-word matching to avoid "banana" matching "an" from a recipe ingredient.
   function matchedRecipes(){
     if(!result?.ingredients?.length||!recipes.length)return[];
-    const have=result.ingredients.map(s=>s.toLowerCase().trim()).filter(s=>s.length>=3);
+    // Strip quantities and stop-words; extract meaningful nouns from scanned items
+    const stopWords=new Set(["a","an","the","of","with","and","or","fresh","dried","large","small","medium","big","whole","half","sliced","chopped","diced","minced","grated","ground","cooked","raw","frozen","canned","cup","cups","tbsp","tsp","oz","g","kg","ml","lb","lbs","teaspoon","tablespoon","pinch","handful","bunch","clove","cloves","piece","pieces","can","bottle"]);
+    function extractNouns(s){
+      return s.toLowerCase().replace(/[\d¼½¾⅓⅔⅛]/g,"").split(/[\s,]+/).map(w=>w.replace(/[^a-z]/g,"")).filter(w=>w.length>=3&&!stopWords.has(w));
+    }
+    const haveNouns=result.ingredients.flatMap(s=>extractNouns(s)).filter(Boolean);
+    if(!haveNouns.length)return[];
     return recipes.map(r=>{
       const ings=(r.ingredients||[]).map(i=>(typeof i==="string"?i:i.name||"").toLowerCase());
-      const hits=have.filter(h=>{
-        const re=new RegExp(`\\b${h.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}\\b`);
-        return ings.some(i=>re.test(i));
-      });
+      const recipeNouns=[...new Set(ings.flatMap(i=>extractNouns(i)))];
+      const hits=haveNouns.filter(h=>recipeNouns.some(rn=>rn.includes(h)||h.includes(rn)));
       return{...r,_hits:hits.length};
     }).filter(r=>r._hits>0).sort((a,b)=>b._hits-a._hits).slice(0,5);
   }
@@ -1645,11 +1770,10 @@ function TabBar({tab,setTab}){
         <rect x="3" y="13" width="8" height="8" rx="2.5" fill={a?"var(--moss)":"none"} stroke={a?"var(--moss)":"var(--mist)"} strokeWidth="1.8"/>
         <rect x="13" y="13" width="8" height="8" rx="2.5" fill={a?"var(--moss)":"none"} stroke={a?"var(--moss)":"var(--mist)"} strokeWidth="1.8"/>
       </svg>)},
-    {id:"categories",label:"Categories",icon:a=>(
+    {id:"categories",label:"Cookbooks",icon:a=>(
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-        <rect x="3" y="3" width="8" height="8" rx="2.5" fill={a?"var(--moss)":"none"} stroke={a?"var(--moss)":"var(--mist)"} strokeWidth="1.8"/>
-        <rect x="13" y="3" width="8" height="8" rx="2.5" fill={a?"var(--moss)":"none"} stroke={a?"var(--moss)":"var(--mist)"} strokeWidth="1.8"/>
-        <rect x="3" y="13" width="18" height="8" rx="2.5" fill={a?"var(--moss)":"none"} stroke={a?"var(--moss)":"var(--mist)"} strokeWidth="1.8"/>
+        <rect x="3" y="3" width="18" height="18" rx="3" fill={a?"var(--moss)":"none"} stroke={a?"var(--moss)":"var(--mist)"} strokeWidth="1.8"/>
+        <path d="M7 7h10M7 12h10M7 17h6" stroke={a?"#fff":"var(--mist)"} strokeWidth="1.8" strokeLinecap="round"/>
       </svg>)},
     {id:"planner",label:"Planner",icon:a=>(
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -1705,7 +1829,7 @@ const HELP_SECTIONS=[
   {icon:"🛒",title:"Grocery List",body:"Open any recipe and tap '+ All' under Ingredients to add everything to your list, or tick individual ingredients and tap '+ Grocery' to add just those. The Grocery tab shows your full list. Tap items to check them off. Share the list via the 📤 button."},
   {icon:"📅",title:"Meal Planner",body:"The Planner tab shows a weekly meal grid. Tap any slot to assign a recipe. Use the ‹ › arrows to navigate between weeks. Tap 'Grocery' to build a shopping list from all planned meals automatically."},
   {icon:"📷",title:"Ingredient Scanner",body:"Go to the Scan tab (camera icon). Take a photo of ingredients, a meal, or food packaging. AI will identify what it sees and estimate the total calories, protein, carbs, and fat. Tap '+ Add to Grocery List' to add identified ingredients."},
-  {icon:"🗂",title:"Categories",body:"The Categories tab lets you group recipes into custom collections — e.g. 'Weeknight Dinners' or 'Meal Prep'. Create a category, choose a colour, then add recipes to it. Tap a category to browse its recipes."},
+  {icon:"📗",title:"Cookbooks",body:"The Cookbooks tab lets you group recipes into named collections — e.g. 'Weeknight Dinners' or 'Meal Prep'. Create a cookbook, pick an icon, then add recipes to it. Tap a cookbook to browse its recipes and share it with others."},
   {icon:"📤",title:"Sharing",body:"Open any recipe and tap the 📤 Share button to share the recipe title, ingredients, and method via any app. On the Grocery tab the 📤 button shares your shopping list. Both fall back to clipboard copy if native sharing isn't available."},
   {icon:"💾",title:"Backup & Export",body:"On the Recipes tab, scroll the filter pills to find ⬇ Export. This downloads all your recipes as a JSON file you can keep as a backup or import into another device in future."},
   {icon:"🌙",title:"Dark Mode",body:"Go to Settings (gear icon) and toggle Dark Mode. The theme is saved and applied automatically each time you open the app."},
@@ -1840,7 +1964,14 @@ function AppInner(){
   const[session,setSession]=useState(null);
   const[syncStatus,setSyncStatus]=useState("idle");
   const[welcomed,setWelcomed]=useState(true); // true = skip screen until we check storage
+  const[toast,setToast]=useState(null); // {type:"success"|"error", recipe?, message}
+  const toastTimer=useRef(null);
   function setSelectedRecipeGlobal(r){setGlobalModalRecipe(r);}
+  function showToast(type,recipe,message){
+    clearTimeout(toastTimer.current);
+    setToast({type,recipe,message});
+    toastTimer.current=setTimeout(()=>setToast(null),4500);
+  }
   const lastBackRef=useRef(0);
   const searchParams=useSearchParams();
   const router=useRouter();
@@ -1915,6 +2046,7 @@ function AppInner(){
   function addRecipe(r){
     const u=[r,...recipes];setRecipes(u);save(KEYS.r,u);
     if(session)cloudUpsert(r,session.user.id).then(()=>setSyncStatus("synced"));
+    showToast("success",r,`"${r.title||"Recipe"}" saved`);
   }
   function deleteRecipe(id){
     const u=recipes.filter(r=>r.id!==id);setRecipes(u);save(KEYS.r,u);
@@ -1949,16 +2081,24 @@ function AppInner(){
       <Header count={recipes.length} onHelp={()=>setShowHelp(true)} session={session} onAccountPress={()=>setTab("settings")}/>
       {showHelp&&<HelpModal onClose={()=>setShowHelp(false)}/>}
       <RecipeModal recipe={globalModalRecipe} onClose={()=>setGlobalModalRecipe(null)} onUpdate={r=>{updateRecipe(r);setGlobalModalRecipe(r);}}/>
-      {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")}/>}
-      {tab==="categories"&&<CategoriesTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe}/>}
+      {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")} onImportFail={()=>showToast("error",null,"Import failed — couldn't read that recipe")} onRefresh={session?async()=>{setSyncStatus("syncing");const cloud=await cloudLoad(session.user.id);if(cloud){setRecipes(cloud);save(KEYS.r,cloud);setSyncStatus("synced");}else setSyncStatus("idle");}:null}/>}
+      {tab==="categories"&&<CookbooksTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe}/>}
       {tab==="planner"&&<PlannerTab recipes={recipes} planner={planner} setPlanner={setPlanner} onUpdate={updateRecipe}/>}
       {tab==="scan"&&<ScanTab recipes={recipes} onOpenRecipe={r=>setSelectedRecipeGlobal(r)}/>}
       {tab==="grocery"&&<GroceryTab/>}
-      {tab==="settings"&&<SettingsTab session={session} onSignIn={handleSignIn} onSignOut={handleSignOut} syncStatus={syncStatus}/>}
+      {tab==="settings"&&<SettingsTab session={session} onSignIn={handleSignIn} onSignOut={handleSignOut} syncStatus={syncStatus} recipes={recipes} onImport={rs=>{const merged=[...rs.filter(r=>!recipes.find(x=>x.id===r.id)),...recipes];setRecipes(merged);save(KEYS.r,merged);}}/>}
       <TabBar tab={tab} setTab={setTab}/>
       {backToast&&(
         <div style={{position:"fixed",bottom:90,left:"50%",transform:"translateX(-50%)",background:"rgba(15,24,17,.88)",color:"#fff",borderRadius:24,padding:"10px 20px",fontSize:13,fontWeight:600,zIndex:500,pointerEvents:"none",backdropFilter:"blur(8px)",whiteSpace:"nowrap",boxShadow:"0 4px 16px rgba(0,0,0,.3)"}}>
           Press back again to exit
+        </div>
+      )}
+      {toast&&(
+        <div style={{position:"fixed",bottom:90,left:12,right:12,zIndex:501,display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderRadius:16,boxShadow:"0 8px 32px rgba(0,0,0,.28)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",background:toast.type==="success"?"rgba(30,56,40,.95)":"rgba(120,20,20,.92)",color:"#fff",border:`1px solid ${toast.type==="success"?"rgba(74,222,128,.3)":"rgba(255,120,120,.3)"}`}}>
+          <span style={{fontSize:20}}>{toast.type==="success"?"✓":"✕"}</span>
+          <span style={{flex:1,fontSize:13,fontWeight:600,lineHeight:1.4}}>{toast.message}</span>
+          {toast.type==="success"&&toast.recipe&&<button onClick={()=>{setGlobalModalRecipe(toast.recipe);setToast(null);}} style={{background:"rgba(255,255,255,.15)",border:"1px solid rgba(255,255,255,.25)",borderRadius:20,padding:"5px 14px",fontSize:12,fontWeight:700,color:"#fff",cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>Open →</button>}
+          <button onClick={()=>setToast(null)} style={{background:"none",border:"none",color:"rgba(255,255,255,.6)",fontSize:18,cursor:"pointer",lineHeight:1,padding:0,flexShrink:0}}>×</button>
         </div>
       )}
     </div>

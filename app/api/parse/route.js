@@ -27,6 +27,28 @@ export async function POST(req) {
   const isUrl = input.trim().startsWith("http");
   let pageText = "", ogImage = "", ogTitle = "";
 
+  // ── oEmbed for Instagram / TikTok — gets caption text without auth ────────────
+  if (isUrl) {
+    const isInstagram = /instagram\.com\/(p|reel|tv)\//i.test(input);
+    const isTikTok = /tiktok\.com\/@[^/]+\/video\//i.test(input);
+    if (isInstagram || isTikTok) {
+      try {
+        const oEmbedUrl = isInstagram
+          ? `https://api.instagram.com/oembed/?url=${encodeURIComponent(input)}&maxwidth=400`
+          : `https://www.tiktok.com/oembed?url=${encodeURIComponent(input)}`;
+        const oRes = await fetch(oEmbedUrl, { signal: AbortSignal.timeout(5000) });
+        if (oRes.ok) {
+          const oData = await oRes.json();
+          // caption / title is typically in oData.title — strip leading username
+          const caption = (oData.title || "").replace(/^@[\w.]+:\s*/,"");
+          if (caption) pageText = caption;
+          if (oData.thumbnail_url) ogImage = oData.thumbnail_url;
+          ogTitle = oData.title || "";
+        }
+      } catch {}
+    }
+  }
+
   if (isUrl) {
     // ── Step 1: Direct fetch for page content (needed for Claude to parse the recipe) ──
     const agents = [
@@ -111,8 +133,8 @@ Nutrition per serving: calories ${recipe.nutrition?.calories || ""}, protein ${r
         const mlRes = await fetch(mlUrl, { signal: AbortSignal.timeout(8000) });
         const mlData = await mlRes.json();
         if (mlData.status === "success") {
-          if (mlData.data?.image?.url) ogImage = mlData.data.image.url;
-          // If direct fetch got no page text either, use Microlink's metadata for Claude
+          if (!ogImage && mlData.data?.image?.url) ogImage = mlData.data.image.url;
+          // Only use Microlink text if we have nothing else
           if (!pageText) {
             ogTitle = ogTitle || mlData.data?.title || "";
             pageText = [mlData.data?.title, mlData.data?.description].filter(Boolean).join(" ");
@@ -141,7 +163,7 @@ Nutrition per serving: calories ${recipe.nutrition?.calories || ""}, protein ${r
 - nutrition: estimate per serving (all integers)
 - servings: integer
 - prepTime/cookTime: "15 mins" style
-- ingredients: amount (number), unit (abbrev or null for countable), name
+- ingredients: amount (number), unit (abbrev or null for countable), name MUST include descriptive prep words if available e.g. "finely chopped onion", "sliced chicken breast", "whole garlic cloves", "roughly torn basil leaves" — never just "onion" if the recipe says "finely chopped onion"
 - tags: 2-5 lowercase: chicken,dinner,pasta,vegan,quick,vegetarian,dessert,breakfast,soup,salad,beef,fish,seafood
 - emoji: one dish emoji
 - source: site/platform name

@@ -5,10 +5,19 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.16";
+const APP_VERSION = "2.17";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.17", title:"Major update: Cook, Track & Plan", major:true, items:[
+    "Cook history: tap 'Made it ★' on any recipe to log when you cooked it and give it a personal rating",
+    "Personal notes: a private notes field on every recipe that AI Refresh never overwrites",
+    "Pantry tracker: mark ingredients you have at home — grocery list auto-hides them",
+    "Smart weekly planner: 'Plan my week' auto-fills your week with a balanced mix of your recipes",
+    "Voice cook mode: say 'next', 'back', 'repeat' or 'timer' hands-free while cooking",
+    "Keep screen awake during cooking — toggle in Settings under Cook Mode",
+    "App now works offline: saved recipes and images load without internet",
+  ]},
   { v:"2.16", title:"Feature spotlight", items:[
     "What's New now spotlights standout features like AI Refresh and Shared Cookbooks",
   ]},
@@ -32,10 +41,14 @@ const LATEST_NOTABLE = (CHANGELOG.find(c=>c.major)||CHANGELOG[0]).v;
 const PRO_FEATURES = [
   { icon:"🔍", name:"AI Refresh", desc:"Recipe imported with missing steps or ingredients? Tap AI Refresh in the editor and it digs deeper into the source — re-reading the page and video for everything the quick import missed, then fills the gaps automatically." },
   { icon:"🌐", name:"Shared Cookbooks", desc:"Invite family or friends to a cookbook and build it together. Everyone's additions sync live, you can see who's joined, and recipes flow both ways — perfect for planning meals as a household." },
+  { icon:"✓", name:"Cook History & Rating", desc:"Tap 'Made it ★' after cooking to log it and give a star rating. See when you last cooked a recipe, your average rating, and sort your whole collection by what you love most." },
+  { icon:"🏠", name:"Pantry Tracker", desc:"Mark the ingredients you always have at home. The grocery list automatically hides pantry staples so your shopping list only shows what you actually need to buy." },
+  { icon:"✨", name:"Smart Weekly Planner", desc:"Tap 'Plan week' and the app fills your week automatically — picking from your highest-rated recipes and mixing up the variety so every day feels different." },
+  { icon:"🎙️", name:"Voice Cook Mode", desc:"Cook completely hands-free. Say 'next', 'back', 'repeat', or 'timer' and the app responds — no need to touch your phone with floury hands." },
 ];
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
-const KEYS = { r:"fnp_r4", c:"fnp_c3", p:"fnp_p3", g:"fnp_g1", t:"fnp_theme" };
+const KEYS = { r:"fnp_r4", c:"fnp_c3", p:"fnp_p3", g:"fnp_g1", t:"fnp_theme", pantry:"fnp_pantry1" };
 const load = k => { try { const v = JSON.parse(localStorage.getItem(k)||"null"); return v || []; } catch { return []; } };
 const save = (k,v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
@@ -265,6 +278,9 @@ function RecipeCard({recipe,onOpen,onDelete,onToggleFav}){
       {recipe.nutrition?.calories>0&&(
         <div style={{position:"absolute",top:8,left:onToggleFav?44:8,background:"rgba(10,18,14,.52)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.18)",borderRadius:20,padding:"3px 8px",fontSize:10,color:"rgba(255,255,255,.95)",fontWeight:700}}>🔥 {recipe.nutrition.calories}</div>
       )}
+      {recipe.cookHistory?.length>0&&(
+        <div style={{position:"absolute",top:8,left:onToggleFav?(recipe.nutrition?.calories>0?80:44):(recipe.nutrition?.calories>0?52:8),background:"rgba(10,18,14,.52)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.18)",borderRadius:20,padding:"3px 8px",fontSize:10,color:"rgba(255,255,255,.95)",fontWeight:700}}>✓ {recipe.cookHistory.length}×</div>
+      )}
       <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"8px 10px 10px"}}>
         <div className="serif" style={{fontWeight:600,fontSize:14,color:"#fff",lineHeight:1.2,marginBottom:4,textShadow:"0 1px 4px rgba(0,0,0,.5)"}}>{recipe.title||"Untitled"}</div>
         <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
@@ -351,15 +367,49 @@ function CookMode({recipe,onClose}){
   const[step,setStep]=useState(0);
   const[ingsOpen,setIngsOpen]=useState(false);
   const[timer,setTimer]=useState(null);
+  const[voiceActive,setVoiceActive]=useState(false);
+  const[voiceHint,setVoiceHint]=useState("");
   const timerRef=useRef(null);
+  const voiceRef=useRef(null);
   const steps=recipe.steps||[];
   const ings=recipe.ingredients||[];
   const total=steps.length;
   const wakeLockRef=useRef(null);
+  const stepRef=useRef(step);
+  useEffect(()=>{stepRef.current=step;},[step]);
+
+  // Wake lock: only if user has it enabled (default on)
   useEffect(()=>{
+    const enabled=localStorage.getItem("fnp_wakelock")!=="off";
+    if(!enabled)return;
     (async()=>{try{wakeLockRef.current=await navigator.wakeLock?.request("screen");}catch{}})();
     return()=>{try{wakeLockRef.current?.release();}catch{}};
   },[]);
+
+  // [PRO] Voice navigation in Cook Mode
+  function startVoice(){
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){setVoiceHint("Voice not supported");return;}
+    const r=new SR();r.continuous=true;r.interimResults=false;r.lang="en-AU";
+    r.onresult=e=>{
+      const t=e.results[e.results.length-1][0].transcript.toLowerCase().trim();
+      if(/\bnext\b/.test(t)){setStep(s=>Math.min(total-1,s+1));setVoiceHint("→ Next");}
+      else if(/\b(back|previous|prev)\b/.test(t)){setStep(s=>Math.max(0,s-1));setVoiceHint("← Back");}
+      else if(/\brepeat\b/.test(t)){setVoiceHint("↻ Repeat");setStep(s=>{const v=s;setTimeout(()=>setStep(v),50);return v;});}
+      else if(/\btimer\b/.test(t)){
+        const m=steps[stepRef.current]?.match(TIME_RE);
+        if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");}
+        else setVoiceHint("No time found");
+      }
+      else setVoiceHint(`"${t}"?`);
+      setTimeout(()=>setVoiceHint(""),2000);
+    };
+    r.onerror=()=>{setVoiceActive(false);setVoiceHint("");};
+    r.onend=()=>{setVoiceActive(false);setVoiceHint("");};
+    r.start();voiceRef.current=r;setVoiceActive(true);setVoiceHint("Listening…");
+  }
+  function stopVoice(){voiceRef.current?.stop();setVoiceActive(false);setVoiceHint("");}
+  useEffect(()=>()=>{voiceRef.current?.stop();},[]);
   useEffect(()=>{
     if(timer?.running){
       timerRef.current=setInterval(()=>setTimer(t=>{
@@ -442,6 +492,9 @@ function CookMode({recipe,onClose}){
         </div>
       )}
 
+      {/* Voice hint */}
+      {voiceHint&&<div style={{textAlign:"center",fontSize:13,color:"rgba(255,255,255,.7)",fontWeight:600,marginBottom:4,flexShrink:0,position:"relative",zIndex:1}}>{voiceHint}</div>}
+
       {/* Nav buttons */}
       <div style={{padding:"0 24px",display:"flex",gap:14,flexShrink:0,position:"relative",zIndex:1}}>
         <button onClick={()=>setStep(s=>Math.max(0,s-1))} disabled={step===0} style={{flex:1,padding:"15px 0",borderRadius:"var(--r-md)",border:"1.5px solid rgba(255,255,255,.25)",background:"rgba(255,255,255,.08)",color:"#fff",fontSize:15,fontWeight:600,cursor:step===0?"default":"pointer",opacity:step===0?0.3:1,transition:"opacity .15s",fontFamily:"var(--font-ui)"}}>← Back</button>
@@ -449,6 +502,9 @@ function CookMode({recipe,onClose}){
           ?<button onClick={()=>setStep(s=>s+1)} style={{flex:2,padding:"15px 0",borderRadius:"var(--r-md)",border:"none",background:"linear-gradient(160deg,#3A6B50,#1E3828)",color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(0,0,0,.4)",fontFamily:"var(--font-ui)"}}>Next Step →</button>
           :<button onClick={onClose} style={{flex:2,padding:"15px 0",borderRadius:"var(--r-md)",border:"none",background:"linear-gradient(160deg,#7AB89A,#4A9A72)",color:"#0A1A10",fontSize:15,fontWeight:800,cursor:"pointer",boxShadow:"0 4px 20px rgba(74,222,128,.25)",fontFamily:"var(--font-ui)"}}>Done! 🎉</button>
         }
+        <button onClick={voiceActive?stopVoice:startVoice}
+          title={voiceActive?"Stop voice navigation":"Voice navigation: say 'next', 'back', 'repeat', 'timer'"}
+          style={{width:54,padding:"15px 0",borderRadius:"var(--r-md)",border:`1.5px solid ${voiceActive?"rgba(122,184,154,.6)":"rgba(255,255,255,.25)"}`,background:voiceActive?"rgba(122,184,154,.2)":"rgba(255,255,255,.08)",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",animation:voiceActive?"pulse 2s infinite":"none",fontFamily:"var(--font-ui)"}}>🎙️</button>
       </div>
     </div>
   );
@@ -656,6 +712,9 @@ function RecipeModal({recipe,onClose,onUpdate}){
   const[timer,setTimer]=useState(null);
   const timerRef=useRef(null);
   const imgInputRef=useRef(null);
+  const[myNotes,setMyNotes]=useState("");
+  const[notesEditing,setNotesEditing]=useState(false);
+  const[ratingPending,setRatingPending]=useState(false);
 
   function handleImgReplace(e){
     const file=e.target.files?.[0];if(!file)return;
@@ -666,7 +725,7 @@ function RecipeModal({recipe,onClose,onUpdate}){
   }
 
   useEffect(()=>{
-    if(recipe){setServings(recipe.servings||4);setEditing(false);setCookMode(false);setCheckedIngs(new Set());setTimer(null);}
+    if(recipe){setServings(recipe.servings||4);setEditing(false);setCookMode(false);setCheckedIngs(new Set());setTimer(null);setMyNotes(recipe.myNotes||"");setNotesEditing(false);setRatingPending(false);}
   },[recipe?.id]);
 
   useEffect(()=>{
@@ -693,6 +752,20 @@ function RecipeModal({recipe,onClose,onUpdate}){
   function startTimer(label,str){const s=parseTimeSecs(str);if(s){clearInterval(timerRef.current);setTimer({label,total:s,secs:s,running:true});}}
   function toggleIng(i){setCheckedIngs(s=>{const n=new Set(s);n.has(i)?n.delete(i):n.add(i);return n;});}
   const btnGlass={background:"rgba(15,24,17,.5)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,.25)",color:"#fff",cursor:"pointer"};
+
+  // [PRO] Cook history & rating
+  function madeIt(rating){
+    const history=[...(recipe.cookHistory||[]),{date:Date.now(),rating}];
+    onUpdate({...recipe,cookHistory:history});
+    setRatingPending(false);
+  }
+
+  // Last cooked display
+  const lastCook=recipe?.cookHistory?.length>0?recipe.cookHistory[recipe.cookHistory.length-1]:null;
+  function daysAgo(ts){const d=Math.floor((Date.now()-ts)/86400000);return d===0?"today":d===1?"yesterday":`${d}d ago`;}
+  const avgRating=recipe?.cookHistory?.length>0
+    ?Math.round(recipe.cookHistory.reduce((s,h)=>s+h.rating,0)/recipe.cookHistory.length)
+    :0;
   async function shareRecipe(){
     const text=`${recipe.title}\n\nIngredients:\n${(recipe.ingredients||[]).map(i=>typeof i==="string"?i:fmtIng(i,"original",1)).join("\n")}\n\nMethod:\n${(recipe.steps||[]).map((s,i)=>`${i+1}. ${s}`).join("\n")}`;
     if(navigator.share){await navigator.share({title:recipe.title,text,url:recipe.url||""}).catch(()=>{});}
@@ -794,6 +867,51 @@ function RecipeModal({recipe,onClose,onUpdate}){
             </ol>
           </>}
           {recipe.notes&&<p style={{fontSize:13,color:"var(--mist)",fontStyle:"italic",paddingBottom:10,lineHeight:1.65}}>{recipe.notes}</p>}
+
+          {/* Cook history + Made it */}
+          <div style={{background:"var(--sage-pale)",borderRadius:"var(--r-md)",padding:"13px 14px",marginBottom:16,border:"1px solid var(--sage-lt)"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:lastCook||ratingPending?10:0}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:"var(--forest)"}}>Cook History</div>
+                {lastCook&&<div style={{fontSize:11,color:"var(--mist)",marginTop:2}}>Last cooked {daysAgo(lastCook.date)} · {recipe.cookHistory.length} time{recipe.cookHistory.length!==1?"s":""}{avgRating>0?" · "+"★".repeat(avgRating)+"☆".repeat(5-avgRating):""}</div>}
+              </div>
+              {!ratingPending&&<button onClick={()=>setRatingPending(true)} style={{background:"var(--forest)",color:"#fff",border:"none",borderRadius:20,padding:"6px 13px",fontSize:12,fontWeight:700,cursor:"pointer"}}>✓ Made it</button>}
+            </div>
+            {ratingPending&&(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{fontSize:12,color:"var(--mist)"}}>How did it go?</div>
+                <div style={{display:"flex",gap:6}}>
+                  {[1,2,3,4,5].map(n=>(
+                    <button key={n} onClick={()=>madeIt(n)} style={{flex:1,padding:"8px 0",borderRadius:10,border:"1px solid var(--sage-lt)",background:"var(--cream)",fontSize:18,cursor:"pointer"}}>{"★".repeat(n)}</button>
+                  ))}
+                </div>
+                <button onClick={()=>setRatingPending(false)} style={{background:"none",border:"none",color:"var(--mist)",fontSize:12,cursor:"pointer",textAlign:"center"}}>Cancel</button>
+              </div>
+            )}
+          </div>
+
+          {/* Personal notes (AI-proof) */}
+          <div style={{marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+              <span style={{fontSize:13,fontWeight:700,color:"var(--forest)"}}>My Notes</span>
+              <span style={{fontSize:11,color:"var(--mist)"}}>private · AI never overwrites this</span>
+              {!notesEditing&&<button onClick={()=>setNotesEditing(true)} style={{marginLeft:"auto",background:"none",border:"none",color:"var(--moss)",fontSize:12,fontWeight:600,cursor:"pointer"}}>✏️ Edit</button>}
+            </div>
+            {notesEditing?(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                <textarea value={myNotes} onChange={e=>setMyNotes(e.target.value)} placeholder="e.g. added extra garlic, reduce salt next time…"
+                  style={{background:"var(--cream)",border:"1.5px solid var(--sage-lt)",borderRadius:"var(--r-md)",padding:"9px 12px",fontSize:13,outline:"none",color:"var(--ink)",minHeight:72,resize:"none",lineHeight:1.65}}/>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>{onUpdate({...recipe,myNotes});setNotesEditing(false);}} className="btn-primary" style={{flex:1,padding:"8px 0",fontSize:13,borderRadius:10}}>Save</button>
+                  <button onClick={()=>{setMyNotes(recipe.myNotes||"");setNotesEditing(false);}} className="btn-ghost" style={{flex:1,padding:"8px 0",fontSize:13,borderRadius:10}}>Cancel</button>
+                </div>
+              </div>
+            ):(
+              myNotes
+                ?<p style={{fontSize:13,color:"var(--bark)",lineHeight:1.65,background:"var(--cream)",borderRadius:"var(--r-md)",padding:"9px 12px",border:"1px solid var(--sage-lt)"}}>{myNotes}</p>
+                :<button onClick={()=>setNotesEditing(true)} style={{fontSize:13,color:"var(--mist)",background:"var(--sage-pale)",border:"1px dashed var(--sage-lt)",borderRadius:"var(--r-md)",padding:"9px 12px",width:"100%",textAlign:"left",cursor:"pointer"}}>+ Add a private note about this recipe…</button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -1047,7 +1165,7 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared,o
   const allTags=[...new Set(recipes.flatMap(r=>r.tags||[]))];
   let filtered=recipes.filter(r=>{
     const q=search.toLowerCase();
-    const matchQ=!q||r.title?.toLowerCase().includes(q)||(r.tags||[]).some(t=>t.toLowerCase().includes(q))||r.source?.toLowerCase().includes(q);
+    const matchQ=!q||r.title?.toLowerCase().includes(q)||(r.tags||[]).some(t=>t.toLowerCase().includes(q))||r.source?.toLowerCase().includes(q)||(r.ingredients||[]).some(i=>(typeof i==="string"?i:i.name||"").toLowerCase().includes(q));
     const matchTag=!tag||(r.tags||[]).includes(tag);
     const matchFav=!showFavs||r.fav;
     return matchQ&&matchTag&&matchFav;
@@ -1055,6 +1173,8 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared,o
   if(sort==="newest") filtered=[...filtered].sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
   if(sort==="az") filtered=[...filtered].sort((a,b)=>(a.title||"").localeCompare(b.title||""));
   if(sort==="calories") filtered=[...filtered].sort((a,b)=>(a.nutrition?.calories||0)-(b.nutrition?.calories||0));
+  if(sort==="rating") filtered=[...filtered].sort((a,b)=>{const ar=a.cookHistory?.length?a.cookHistory.reduce((s,h)=>s+h.rating,0)/a.cookHistory.length:0;const br=b.cookHistory?.length?b.cookHistory.reduce((s,h)=>s+h.rating,0)/b.cookHistory.length:0;return br-ar;});
+  if(sort==="cooked") filtered=[...filtered].sort((a,b)=>{const al=a.cookHistory?.length?a.cookHistory[a.cookHistory.length-1].date:0;const bl=b.cookHistory?.length?b.cookHistory[b.cookHistory.length-1].date:0;return bl-al;});
 
   // What can I make? — score recipes by ingredient overlap
   const makeResults=makeInput.trim()?recipes.map(r=>{
@@ -1085,6 +1205,8 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared,o
           <option value="newest">Newest</option>
           <option value="az">A–Z</option>
           <option value="calories">Calories</option>
+          <option value="rating">★ Rating</option>
+          <option value="cooked">Recently cooked</option>
         </select>
       </div>
 
@@ -1524,6 +1646,29 @@ function PlannerTab({recipes,planner,setPlanner,onUpdate}){
         </div>
         <div style={{display:"flex",gap:8}}>
           {plannedCount>0&&<button onClick={()=>setShowGrocery(true)} className="btn-primary" style={{padding:"7px 13px",fontSize:12,borderRadius:20}}>🛒 Grocery</button>}
+          {recipes.length>0&&<button onClick={()=>{
+            // [PRO] Smart weekly planner — auto-fills week with highest-rated recipes
+            // Smart auto-fill: pick recipes with variety (different tags) avoiding repeats
+            const available=[...recipes].sort(()=>Math.random()-0.5);
+            const u={...planner};
+            const used=new Set();
+            // Prefer highly-rated recipes
+            const pool=[...recipes].sort((a,b)=>{
+              const ar=a.cookHistory?.length?a.cookHistory.reduce((s,h)=>s+h.rating,0)/a.cookHistory.length:3;
+              const br=b.cookHistory?.length?b.cookHistory.reduce((s,h)=>s+h.rating,0)/b.cookHistory.length:3;
+              return br-ar+Math.random()-0.5;
+            });
+            let pi=0;
+            DAYS.forEach(day=>{
+              ['Dinner','Lunch'].forEach(meal=>{
+                const k=planKey(day,meal);
+                if(u[k])return; // don't overwrite existing
+                while(pi<pool.length&&used.has(pool[pi].id))pi++;
+                if(pi<pool.length){u[k]=pool[pi].id;used.add(pool[pi].id);pi++;}
+              });
+            });
+            setPlanner(u);save(KEYS.p,u);
+          }} className="btn-ghost" style={{padding:"7px 13px",fontSize:12}}>✨ Plan week</button>}
           <button onClick={()=>{const u={...planner};DAYS.forEach(d=>MEALS.forEach(m=>{delete u[planKey(d,m)];}));setPlanner(u);save(KEYS.p,u);}} className="btn-ghost" style={{padding:"7px 13px",fontSize:12}}>Clear</button>
         </div>
       </div>
@@ -1686,6 +1831,48 @@ function GrocerySheet({items:initItems,onClose,onRefresh}){
   );
 }
 
+// ─── PANTRY TRACKER ──────────────────────────────────────────────────────────
+// [PRO] Pantry tracker — mark what you have at home; grocery list hides those items
+function PantrySheet({onClose}){
+  const[items,setItems]=useState(()=>load(KEYS.pantry)||[]);
+  const[input,setInput]=useState("");
+
+  function setAndSave(next){setItems(next);save(KEYS.pantry,next);}
+  function addItem(){
+    if(!input.trim())return;
+    setAndSave([...items,{id:Date.now().toString(),name:input.trim().toLowerCase()}]);
+    setInput("");
+  }
+  function remove(id){setAndSave(items.filter(i=>i.id!==id));}
+  function clearAll(){if(confirm("Clear your whole pantry list?"))setAndSave([]);}
+
+  return(
+    <Sheet onClose={onClose} tall>
+      <div style={{padding:"14px 18px 24px"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+          <div className="serif" style={{fontWeight:600,fontSize:22,color:"var(--forest)"}}>My Pantry</div>
+          {items.length>0&&<button onClick={clearAll} style={{background:"#FEE2E2",border:"1px solid #FECACA",borderRadius:20,padding:"4px 11px",fontSize:11,fontWeight:700,cursor:"pointer",color:"#991B1B"}}>Clear all</button>}
+        </div>
+        <div style={{fontSize:13,color:"var(--mist)",marginBottom:14,lineHeight:1.5}}>Ingredients you have at home. Grocery list auto-hides them.</div>
+        <div style={{display:"flex",gap:8,marginBottom:16}}>
+          <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addItem()} placeholder="e.g. olive oil, eggs, garlic…"
+            style={{flex:1,background:"var(--cream)",border:"1.5px solid var(--parchment)",borderRadius:12,padding:"9px 13px",fontSize:14,outline:"none",color:"var(--ink)"}}/>
+          <button onClick={addItem} className="btn-primary" style={{padding:"0 16px",borderRadius:12,fontSize:18}}>+</button>
+        </div>
+        {items.length===0&&<div style={{textAlign:"center",paddingTop:30,color:"var(--mist)",fontSize:14}}>No pantry items yet — add staples like oil, salt, eggs…</div>}
+        <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+          {items.map(it=>(
+            <div key={it.id} style={{display:"flex",alignItems:"center",gap:5,background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"5px 12px 5px 10px",fontSize:13,fontWeight:600,color:"var(--forest)"}}>
+              ✓ {it.name}
+              <button onClick={()=>remove(it.id)} style={{background:"none",border:"none",color:"var(--mist)",fontSize:15,cursor:"pointer",lineHeight:1,padding:0}}>×</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
 // ─── GROCERY TAB ──────────────────────────────────────────────────────────────
 // Ingredient quantity parsing helpers
 const _FM={'½':0.5,'¼':0.25,'¾':0.75,'⅓':1/3,'⅔':2/3,'⅛':0.125,'⅜':0.375,'⅝':0.625,'⅞':0.875};
@@ -1789,6 +1976,9 @@ function GroceryTab(){
   const[manualInput,setManualInput]=useState("");
   const[groupBy,setGroupBy]=useState("aisle");
   const[unitOv,setUnitOv]=useState({}); // {mergeKey: unitString}
+  const[showPantry,setShowPantry]=useState(false);
+  const[hidePantry,setHidePantry]=useState(false);
+  const pantryItems=()=>(load(KEYS.pantry)||[]).map(i=>i.name.toLowerCase());
 
   function setAndSave(fn){setItems(prev=>{const next=typeof fn==="function"?fn(prev):fn;save(KEYS.g,next);return next;});}
   function toggle(id){setAndSave(is=>is.map(i=>i.id===id?{...i,checked:!i.checked}:i));}
@@ -1811,7 +2001,9 @@ function GroceryTab(){
     setUnitOv(ov=>({...ov,[key]:_nextUnit(currentUnit,type,hasDensity)}));
   }
 
-  const unchecked=items.filter(i=>!i.checked);
+  const pantry=pantryItems();
+  const unchecked=items.filter(i=>!i.checked&&(!hidePantry||!pantry.some(p=>i.text.toLowerCase().includes(p))));
+  const hiddenByPantry=hidePantry?items.filter(i=>!i.checked&&pantry.some(p=>i.text.toLowerCase().includes(p))).length:0;
   const checked=items.filter(i=>i.checked);
   const aisleOrder=[...AISLES.map(a=>a.name),OTHER_AISLE];
 
@@ -1841,9 +2033,13 @@ function GroceryTab(){
             {items.length>0&&<button onClick={clearAll} style={{background:"#FEE2E2",border:"1px solid #FECACA",borderRadius:20,padding:"4px 11px",fontSize:11,fontWeight:700,cursor:"pointer",color:"#991B1B"}}>Clear all</button>}
           </div>
         </div>
-        <div style={{display:"flex",gap:6,marginBottom:10}}>
+        <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
           <button onClick={()=>setGroupBy("aisle")} style={{borderRadius:20,border:"1px solid var(--sage-lt)",padding:"3px 12px",fontSize:11,fontWeight:700,cursor:"pointer",background:groupBy==="aisle"?"var(--forest)":"var(--cream)",color:groupBy==="aisle"?"#fff":"var(--ink)"}}>🛒 By Aisle</button>
           <button onClick={()=>setGroupBy("recipe")} style={{borderRadius:20,border:"1px solid var(--sage-lt)",padding:"3px 12px",fontSize:11,fontWeight:700,cursor:"pointer",background:groupBy==="recipe"?"var(--forest)":"var(--cream)",color:groupBy==="recipe"?"#fff":"var(--ink)"}}>📋 By Recipe</button>
+          <button onClick={()=>setShowPantry(true)} style={{borderRadius:20,border:"1px solid var(--sage-lt)",padding:"3px 12px",fontSize:11,fontWeight:700,cursor:"pointer",background:"var(--cream)",color:"var(--ink)"}}>🏠 Pantry</button>
+          {pantry.length>0&&<button onClick={()=>setHidePantry(h=>!h)} style={{borderRadius:20,border:`1px solid ${hidePantry?"var(--moss)":"var(--sage-lt)"}`,padding:"3px 12px",fontSize:11,fontWeight:700,cursor:"pointer",background:hidePantry?"var(--sage-pale)":"var(--cream)",color:hidePantry?"var(--moss)":"var(--ink)"}}>
+            {hidePantry?`✓ Hiding ${hiddenByPantry} pantry items`:"Hide pantry items"}
+          </button>}
         </div>
 
         <div style={{display:"flex",gap:8,marginTop:4,marginBottom:16}}>
@@ -1902,6 +2098,7 @@ function GroceryTab(){
         )}
         {items.length===0&&<div style={{textAlign:"center",paddingTop:60,color:"var(--mist)",fontSize:14}}>No items yet. Add one above or build from the Planner tab.</div>}
       </div>
+      {showPantry&&<PantrySheet onClose={()=>setShowPantry(false)}/>}
     </div>
   );
 }
@@ -1909,6 +2106,7 @@ function GroceryTab(){
 // ─── SETTINGS TAB ─────────────────────────────────────────────────────────────
 function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onFixImages,onWhatsNew}){
   const[dark,setDark]=useState(()=>{try{return localStorage.getItem(KEYS.t)==="dark";}catch{return false;}});
+  const[wakeLock,setWakeLock]=useState(()=>{try{return localStorage.getItem("fnp_wakelock")!=="off";}catch{return true;}});
   const[signingIn,setSigningIn]=useState(false);
   const[fixing,setFixing]=useState(false);
   const[fixMsg,setFixMsg]=useState("");
@@ -1961,6 +2159,10 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
       if(next){localStorage.setItem(KEYS.t,"dark");document.documentElement.setAttribute("data-theme","dark");}
       else{localStorage.removeItem(KEYS.t);document.documentElement.removeAttribute("data-theme");}
     }catch{}
+  }
+  function toggleWakeLock(){
+    const next=!wakeLock;setWakeLock(next);
+    try{next?localStorage.removeItem("fnp_wakelock"):localStorage.setItem("fnp_wakelock","off");}catch{}
   }
 
   async function handleSignIn(){
@@ -2031,6 +2233,15 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
             </div>
             <button onClick={toggleDark} style={{width:48,height:26,borderRadius:13,border:"none",cursor:"pointer",background:dark?"var(--moss)":"var(--mist)",position:"relative",transition:"background .2s",flexShrink:0}}>
               <div style={{position:"absolute",top:3,left:dark?24:3,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,.2)"}}/>
+            </button>
+          </div>
+          <div style={row}>
+            <div>
+              <div style={label}>Keep Screen Awake in Cook Mode</div>
+              <div style={sub}>Prevents phone screen sleep while cooking</div>
+            </div>
+            <button onClick={toggleWakeLock} style={{width:48,height:26,borderRadius:13,border:"none",cursor:"pointer",background:wakeLock?"var(--moss)":"var(--mist)",position:"relative",transition:"background .2s",flexShrink:0}}>
+              <div style={{position:"absolute",top:3,left:wakeLock?24:3,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,.2)"}}/>
             </button>
           </div>
         </div>

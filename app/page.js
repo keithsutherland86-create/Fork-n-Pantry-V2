@@ -1846,11 +1846,18 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
     if(!onFixImages||fixing)return;
     setFixing(true);setFixMsg("Checking images…");
     try{
-      const{fixed,failed,total}=await onFixImages((done,tot)=>setFixMsg(`Checking ${done}/${tot}…`));
+      const{fixed,failed,total,lastErr}=await onFixImages((done,tot)=>setFixMsg(`Checking ${done}/${tot}…`));
       const parts=[];
       if(fixed)parts.push(`${fixed} restored`);
       if(failed)parts.push(`${failed} couldn't be recovered`);
-      setFixMsg(parts.length?`✓ ${parts.join(", ")}`:"✓ All images already up to date");
+      if(fixed){
+        setFixMsg(`✓ ${parts.join(", ")}`);
+      } else if(failed){
+        // Nothing restored — surface why (e.g. missing Storage bucket) so it's fixable
+        setFixMsg(`✗ ${failed} couldn't be recovered${lastErr?` — ${lastErr}`:""}`);
+      } else {
+        setFixMsg("✓ All images already up to date");
+      }
     }catch(e){setFixMsg("✗ "+(e.message||"Failed"));}
     setFixing(false);
   }
@@ -1993,7 +2000,7 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
           <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4,paddingBottom:6,borderBottom:"1.5px solid var(--parchment)"}}>About</div>
           <div style={row}>
             <div style={label}>App Version</div>
-            <span style={{fontSize:13,color:"var(--mist)"}}>Fork n Pantry v2.11</span>
+            <span style={{fontSize:13,color:"var(--mist)"}}>Fork n Pantry v2.12</span>
           </div>
           <div style={{marginTop:14,padding:"14px 16px",background:"var(--sage-pale)",borderRadius:"var(--r-md)",border:"1px solid var(--sage-lt)"}}>
             <div className="serif" style={{fontWeight:600,fontSize:16,color:"var(--forest)",marginBottom:6}}>Fork n Pantry</div>
@@ -2357,21 +2364,21 @@ async function cloudUploadAll(recipes,userId){
   const rows=recipes.map(r=>({id:r.id,user_id:userId,data:r,updated_at:new Date().toISOString()}));
   await sb.from("recipes").upsert(rows,{onConflict:"id,user_id"});
 }
-async function storeImagePermanently(url,recipeId,userId){
+async function storeImagePermanently(url,recipeId,userId,onErr){
   // Upload to Supabase Storage so Instagram/TikTok CDN expiry never breaks the image
   if(!url||url.startsWith("data:")||url.includes("supabase.co"))return url;
   try{
-    const sb=getSupabase();if(!sb)return url;
+    const sb=getSupabase();if(!sb){onErr&&onErr("not signed in");return url;}
     const res=await fetch(`/api/img?url=${encodeURIComponent(url)}`);
-    if(!res.ok||!res.headers.get("content-type")?.startsWith("image/"))return url;
+    if(!res.ok||!res.headers.get("content-type")?.startsWith("image/")){onErr&&onErr("image source dead");return url;}
     const blob=await res.blob();
     const ext=blob.type.includes("png")?"png":blob.type.includes("webp")?"webp":"jpg";
     const path=`${userId}/${recipeId}.${ext}`;
     const{error}=await sb.storage.from("recipe-images").upload(path,blob,{contentType:blob.type,upsert:true});
-    if(error)return url;
+    if(error){onErr&&onErr("storage: "+(error.message||"upload failed"));return url;}
     const{data:{publicUrl}}=sb.storage.from("recipe-images").getPublicUrl(path);
     return publicUrl;
-  }catch{return url;}
+  }catch(e){onErr&&onErr(e.message||"unknown error");return url;}
 }
 
 // ─── Shared cookbook cloud helpers ──────────────────────────────────────────── [PRO] Shared Cookbooks
@@ -2570,18 +2577,19 @@ function AppInner(){
   async function fixAllImages(onProgress){
     if(!session?.user?.id)return{fixed:0,failed:0,total:0};
     const uid=session.user.id;
-    let fixed=0,failed=0,done=0;
+    let fixed=0,failed=0,done=0,lastErr="";
     const total=recipes.length;
     for(const r of recipes){
       // Already permanent — nothing to do
       if(r.ogImage&&r.ogImage.includes("supabase.co")){done++;onProgress&&onProgress(done,total);continue;}
-      let stored=r.ogImage?await storeImagePermanently(r.ogImage,r.id,uid):"";
+      const onErr=msg=>{lastErr=msg;};
+      let stored=r.ogImage?await storeImagePermanently(r.ogImage,r.id,uid,onErr):"";
       // If the current URL was dead (still not on supabase) try re-parsing the source for a fresh image
       if((!stored||!stored.includes("supabase.co"))&&r.url){
         try{
           const res=await fetch("/api/parse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({input:r.url})});
           const data=await res.json();
-          if(data.ok&&data.ogImage)stored=await storeImagePermanently(data.ogImage,r.id,uid);
+          if(data.ok&&data.ogImage)stored=await storeImagePermanently(data.ogImage,r.id,uid,onErr);
         }catch{}
       }
       if(stored&&stored!==r.ogImage&&stored.includes("supabase.co")){
@@ -2594,7 +2602,7 @@ function AppInner(){
       }
       done++;onProgress&&onProgress(done,total);
     }
-    return{fixed,failed,total};
+    return{fixed,failed,total,lastErr};
   }
 
   function dismissWelcome(){

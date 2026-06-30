@@ -5,7 +5,7 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.26";
+const APP_VERSION = "2.27";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
@@ -433,18 +433,17 @@ function CookMode({recipe,onClose}){
   const armedRef=useRef(false);         // true after wake phrase, awaiting a command
   const armTimerRef=useRef(null);
   const lastActRef=useRef({t:0,cmd:""}); // debounce: interim + final fire the same command
-  const IDLE_HINT="🎙️ Listening — say a command";
-  // Wake phrase: user can set a custom one in Settings; otherwise default "hey fork" + mishears.
-  const WAKE_RE=(()=>{
-    try{
-      const custom=(localStorage.getItem("fnp_wakephrase")||"").trim().toLowerCase();
-      if(custom){
-        const esc=custom.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
-        return new RegExp(`\\b${esc}\\b`);
-      }
-    }catch{}
-    return /\b(?:hey|hi|ok|okay|a)?\s*(?:fork|four|folk|forks|ford|for)\b/;
-  })();
+  // Wake phrase: user can set a custom one in Settings. When a custom phrase IS set it is
+  // REQUIRED for every command (no bare-command shortcut). With no custom phrase we use the
+  // default "hey fork" matcher AND allow short bare commands for convenience.
+  let _customWake="";
+  try{ _customWake=(localStorage.getItem("fnp_wakephrase")||"").trim().toLowerCase(); }catch{}
+  const hasCustomWake=!!_customWake;
+  const WAKE_RE=hasCustomWake
+    ? new RegExp(`\\b${_customWake.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}\\b`)
+    : /\b(?:hey|hi|ok|okay|a)?\s*(?:fork|four|folk|forks|ford|for)\b/;
+  const wakeLabel=hasCustomWake ? `"${_customWake}"` : "Hey Fork";
+  const IDLE_HINT=hasCustomWake ? `🎙️ Say ${wakeLabel} + a command` : "🎙️ Listening — say a command";
 
   // Map a phrase to a command key (or null). Order matters — most specific first.
   function classify(t){
@@ -484,12 +483,10 @@ function CookMode({recipe,onClose}){
   }
 
   // Decide whether a heard phrase should trigger a command.
-  // Three accepted paths (most reliable → most guarded):
-  //  1) wake phrase present → run the command after it (or arm if none yet)
-  //  2) recently armed by a wake phrase → any command counts
-  //  3) a SHORT utterance (≤3 words) that is essentially just a command word
-  // The short-utterance path is what makes it responsive; the word-count cap keeps
-  // normal kitchen conversation from triggering it.
+  // Paths: (1) wake phrase present → run the command after it (or arm if none yet);
+  //        (2) recently armed by a wake phrase → any command counts;
+  //        (3) ONLY when no custom wake phrase is set: a short (≤3 word) bare command.
+  // If the user set a custom wake phrase, it is required — the bare-command shortcut is off.
   function handleVoiceResult(raw){
     const lc=(raw||"").toLowerCase().trim().replace(/[.,!?]/g,"");
     if(!lc)return false;
@@ -499,11 +496,11 @@ function CookMode({recipe,onClose}){
     let cmd=null;
     if(hasWake){
       cmd=classify(after);
-      if(!cmd){arm();return false;}   // "Hey Fork" alone → arm and wait
+      if(!cmd){arm();return false;}   // wake phrase alone → arm and wait
     } else if(armedRef.current){
       cmd=classify(lc);
-    } else if(wordCount<=3){
-      cmd=classify(lc);
+    } else if(!hasCustomWake && wordCount<=3){
+      cmd=classify(lc);   // convenience shortcut only when no custom wake phrase is set
     }
     if(!cmd)return false;
     // Debounce: interim + final results repeat the same phrase within a moment
@@ -527,14 +524,14 @@ function CookMode({recipe,onClose}){
     // for the final result). continuous=false + auto-restart stays reliable on mobile.
     r.continuous=false;r.interimResults=true;r.lang="en-AU";
     r.onresult=e=>{
-      // Scan all results in this batch (interim + final) for a command
-      let acted=false;
+      // Scan all results in this batch (interim + final) for a command.
+      // We do NOT stop after acting — the debounce in handleVoiceResult ignores the
+      // repeat (interim+final), and letting the session end naturally avoids a stuck
+      // state where onend never fires and listening dies after one command.
       for(let i=e.resultIndex;i<e.results.length;i++){
         const raw=e.results[i]?.[0]?.transcript||"";
-        if(handleVoiceResult(raw)){acted=true;break;}
+        if(handleVoiceResult(raw))break;
       }
-      // After acting, restart fresh so the recognised buffer doesn't re-fire
-      if(acted){try{r.stop();}catch{}}
     };
     r.onerror=err=>{
       if(err.error!=="no-speech"&&err.error!=="aborted")setVoiceHint("Mic error — retrying…");
@@ -568,6 +565,15 @@ function CookMode({recipe,onClose}){
     setVoiceActive(false);setVoiceHint("");
   }
   useEffect(()=>()=>{voiceShouldRunRef.current=false;clearTimeout(armTimerRef.current);try{voiceRef.current?.abort();}catch{};window.speechSynthesis?.cancel();},[]);
+  // Watchdog: if listening should be on but no instance is alive, restart it.
+  // Guarantees voice never silently dies after a command.
+  useEffect(()=>{
+    if(!voiceActive)return;
+    const iv=setInterval(()=>{
+      if(voiceShouldRunRef.current && !voiceRef.current && !voiceSpawningRef.current) spawnRecognition();
+    },2500);
+    return()=>clearInterval(iv);
+  },[voiceActive]);
   useEffect(()=>{
     if(timer?.running){
       timerRef.current=setInterval(()=>setTimer(t=>{
@@ -2447,7 +2453,7 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
           </div>
           <div style={{padding:"14px 0",borderBottom:"1px solid var(--sage-pale)"}}>
             <div style={label}>Cook Mode Wake Phrase</div>
-            <div style={{...sub,marginBottom:8}}>Optional. Set a custom phrase to trigger voice commands (e.g. "hey chef"). Leave blank to use the default "Hey Fork" — short commands like "next" work either way.</div>
+            <div style={{...sub,marginBottom:8}}>Optional. Set a custom phrase (e.g. "hey chef") and you'll need to say it before every command — "hey chef, next". Leave blank to use the default, where you can also just say a short command like "next" on its own.</div>
             <input value={wakePhrase} onChange={e=>saveWakePhrase(e.target.value)} placeholder="Hey Fork (default)" maxLength={30}
               style={{width:"100%",background:"var(--cream)",border:"1.5px solid var(--parchment)",borderRadius:"var(--r-md)",padding:"10px 13px",fontSize:14,outline:"none",color:"var(--ink)"}}/>
           </div>

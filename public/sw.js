@@ -1,4 +1,4 @@
-const SHELL_CACHE = "fnp-shell-v2.26";
+const SHELL_CACHE = "fnp-shell-v2.27";
 const IMG_CACHE   = "fnp-images-v1";
 const SHELL_URLS  = ["/", "/manifest.json", "/icons/icon-512.png", "/icons/icon-192.png"];
 

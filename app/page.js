@@ -383,8 +383,9 @@ function CookMode({recipe,onClose}){
 // ─── Edit modal ───────────────────────────────────────────────────────────────
 function EditModal({recipe,onSave,onClose}){
   const inp={background:"var(--cream)",border:"1.5px solid var(--parchment)",borderRadius:"var(--r-md)",padding:"9px 12px",fontSize:14,outline:"none",color:"var(--ink)",width:"100%"};
-  // Convert ingredients to plain strings for editing
   const ingToStr=ing=>typeof ing==="string"?ing:fmtIng(ing,"original",1);
+  const[refreshing,setRefreshing]=useState(false);
+  const[refreshMsg,setRefreshMsg]=useState("");
   const[form,setForm]=useState({
     title:recipe.title||"",
     description:recipe.description||"",
@@ -400,6 +401,40 @@ function EditModal({recipe,onSave,onClose}){
     emoji:recipe.emoji||"🍽️",
     ogImage:recipe.ogImage||"",
   });
+
+  async function handleAiRefresh(){
+    const url=form.url||recipe.url;
+    if(!url)return;
+    setRefreshing(true);setRefreshMsg("");
+    try{
+      const oldIngCount=form.ingredientsText.split("\n").filter(l=>l.trim()).length;
+      const oldStepCount=form.stepsText.split("\n").filter(l=>l.trim()).length;
+      const res=await fetch("/api/parse",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({input:url,mode:"deep",existing:{title:form.title,ingredientCount:oldIngCount,stepCount:oldStepCount}})});
+      const data=await res.json();
+      if(!data.ok)throw new Error(data.error||"Parse failed");
+      const r=data.recipe;
+      const newIngCount=(r.ingredients||[]).length;
+      const newStepCount=(r.steps||[]).length;
+      const improvements=[];
+      setForm(f=>{
+        const next={...f};
+        if(r.title&&!f.title)next.title=r.title;
+        if((r.description||"").length>(f.description||"").length)next.description=r.description;
+        if(newIngCount>oldIngCount){next.ingredientsText=(r.ingredients||[]).map(ingToStr).join("\n");improvements.push(`ingredients: ${oldIngCount}→${newIngCount}`);}
+        if(newStepCount>oldStepCount){next.stepsText=(r.steps||[]).join("\n");improvements.push(`steps: ${oldStepCount}→${newStepCount}`);}
+        if(r.prepTime&&!f.prepTime)next.prepTime=r.prepTime;
+        if(r.cookTime&&!f.cookTime)next.cookTime=r.cookTime;
+        if(r.servings&&!f.servings)next.servings=r.servings;
+        if((r.tags||[]).length&&!f.tags)next.tags=r.tags.join(", ");
+        if(data.ogImage&&!f.ogImage)next.ogImage=data.ogImage;
+        return next;
+      });
+      if(improvements.length)setRefreshMsg("✓ Improved: "+improvements.join(", "));
+      else setRefreshMsg("No new content found — this may be all that's available from the source.");
+    }catch(e){setRefreshMsg("✗ "+(e.message||"Refresh failed"));}
+    setRefreshing(false);
+  }
 
   function handleSave(){
     const updated={
@@ -423,13 +458,22 @@ function EditModal({recipe,onSave,onClose}){
     <div style={{position:"fixed",inset:0,background:"rgba(15,24,17,.65)",backdropFilter:"blur(5px)",WebkitBackdropFilter:"blur(5px)",zIndex:600,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{background:"var(--linen)",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"95vh",overflowY:"auto",paddingBottom:"calc(24px + env(safe-area-inset-bottom))",boxShadow:"0 -8px 48px rgba(15,24,17,.25)"}}>
         <div style={{width:34,height:4,background:"var(--sage-lt)",borderRadius:2,margin:"12px auto 0"}}/>
-        <div style={{padding:"14px 18px 0",display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <div style={{padding:"14px 18px 0",display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <div className="serif" style={{fontWeight:600,fontSize:22,color:"var(--forest)"}}>Edit Recipe</div>
           <div style={{display:"flex",gap:8}}>
             <button onClick={onClose} className="btn-ghost" style={{padding:"7px 13px",fontSize:13}}>Cancel</button>
             <button onClick={handleSave} className="btn-primary" style={{padding:"7px 16px",fontSize:13,borderRadius:20}}>Save ✓</button>
           </div>
         </div>
+        {(form.url||recipe.url)&&(
+          <div style={{padding:"0 18px 12px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <button onClick={handleAiRefresh} disabled={refreshing}
+              style={{display:"flex",alignItems:"center",gap:6,background:"var(--sage-pale)",border:"1.5px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:refreshing?"wait":"pointer",color:"var(--moss)",opacity:refreshing?.7:1}}>
+              {refreshing?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span> Searching deeper…</>:<>🔍 AI Refresh</>}
+            </button>
+            {refreshMsg&&<span style={{fontSize:12,color:refreshMsg.startsWith("✓")?"var(--moss)":"#991B1B",flex:1}}>{refreshMsg}</span>}
+          </div>
+        )}
 
         <div style={{padding:"0 18px 24px",display:"flex",flexDirection:"column",gap:12}}>
           {/* Title + emoji row */}

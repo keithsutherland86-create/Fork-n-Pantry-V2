@@ -1,6 +1,7 @@
 export async function POST(req) {
   const body = await req.json();
-  const { input = "", imageBase64 = "", imageMediaType = "image/jpeg", mode = "" } = body;
+  const { input = "", imageBase64 = "", imageMediaType = "image/jpeg", mode = "", existing = null } = body;
+  const isDeep = mode === "deep";
 
   // ── Nutrition scan mode ───────────────────────────────────────────────────────
   if (mode === "nutrition" && imageBase64) {
@@ -125,20 +126,18 @@ Nutrition per serving: calories ${recipe.nutrition?.calories || ""}, protein ${r
       }
     }
 
-    // ── Step 2: If no image from direct fetch, try Microlink (headless browser, bypasses bot blocking) ──
-    if (!ogImage) {
+    // ── Step 2: Microlink (headless browser — always run in deep mode, otherwise fallback) ──
+    if (!ogImage || isDeep) {
       try {
         const mlKey = process.env.MICROLINK_API_KEY;
         const mlUrl = `https://api.microlink.io?url=${encodeURIComponent(input)}${mlKey ? `&apiKey=${mlKey}` : ""}`;
-        const mlRes = await fetch(mlUrl, { signal: AbortSignal.timeout(8000) });
+        const mlRes = await fetch(mlUrl, { signal: AbortSignal.timeout(10000) });
         const mlData = await mlRes.json();
         if (mlData.status === "success") {
           if (!ogImage && mlData.data?.image?.url) ogImage = mlData.data.image.url;
-          // Only use Microlink text if we have nothing else
-          if (!pageText) {
-            ogTitle = ogTitle || mlData.data?.title || "";
-            pageText = [mlData.data?.title, mlData.data?.description].filter(Boolean).join(" ");
-          }
+          const mlText = [mlData.data?.title, mlData.data?.description].filter(Boolean).join("\n");
+          if (!pageText) { ogTitle = ogTitle || mlData.data?.title || ""; pageText = mlText; }
+          else if (isDeep && mlText) pageText = pageText + "\n\n[Additional context from page]\n" + mlText;
         }
       } catch {}
     }
@@ -175,17 +174,32 @@ Nutrition per serving: calories ${recipe.nutrition?.calories || ""}, protein ${r
       ? `URL: ${input}${ogTitle?`\nTitle: ${ogTitle}`:""}\n\nPage content:\n${pageText}`
       : isUrl ? `URL: ${input}` : input;
 
+  const deepPrefix = isDeep && existing ? `A previous parse of this recipe was incomplete. What was found so far:
+- Title: ${existing.title || "unknown"}
+- Ingredients: ${existing.ingredientCount || 0} items found (expected more)
+- Steps: ${existing.stepCount || 0} items found (expected more)
+
+Dig deeper into the content below. Infer and reconstruct ingredients and steps from any context clues — amounts mentioned, techniques described, visuals referenced. Be thorough and fill every field.\n\n` : "";
+
+  const prompt = isDeep
+    ? `${deepPrefix}Extract a COMPLETE recipe from this content. Be exhaustive — infer missing details from context. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`
+    : `Extract recipe details from this content. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`;
+
   const msgContent = imageBase64
     ? [
         { type:"image", source:{ type:"base64", media_type:imageMediaType, data:imageBase64 } },
         { type:"text", text:`Extract recipe details from this image. Return ONLY raw JSON, no markdown:\n\n${schema}\n\n${rules}` }
       ]
-    : [{ type:"text", text:`Extract recipe details from this content. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}` }];
+    : [{ type:"text", text:prompt }];
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method:"POST",
     headers:{ "Content-Type":"application/json", "x-api-key":process.env.ANTHROPIC_API_KEY, "anthropic-version":"2023-06-01" },
-    body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:1400, messages:[{ role:"user", content:msgContent }] }),
+    body: JSON.stringify({
+      model: isDeep ? "claude-sonnet-4-6" : "claude-haiku-4-5-20251001",
+      max_tokens: isDeep ? 3000 : 1400,
+      messages:[{ role:"user", content:msgContent }]
+    }),
   });
 
   const data = await res.json();

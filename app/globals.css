@@ -183,3 +183,5 @@ input::placeholder, textarea::placeholder { color: var(--silver); }
 [data-theme="dark"] select {
   color-scheme: dark;
 }
+
+@keyframes spin { to { transform: rotate(360deg); } }

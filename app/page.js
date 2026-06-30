@@ -1131,15 +1131,19 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
       {(()=>{
         // Build contributor list from recipe authors + owner
         const seen=new Map();
-        seen.set(sharedBook.owner_id,{name:sharedBook.owner_name,isOwner:true,recipeCount:0});
+        seen.set(sharedBook.owner_id,{name:sharedBook.owner_name,isOwner:true,recipeCount:0,accepted:true});
+        // Add named members who accepted invite (member_ids and member_names are parallel arrays)
+        (sharedBook.member_ids||[]).forEach((id,i)=>{
+          const name=(sharedBook.member_names||[])[i]||"Member";
+          if(!seen.has(id))seen.set(id,{name,isOwner:false,recipeCount:0,accepted:true});
+        });
+        // Add recipe counts from shared recipes
         for(const row of sharedRecipes){
-          if(!seen.has(row.added_by))seen.set(row.added_by,{name:row.added_by_name,isOwner:false,recipeCount:0});
+          if(!seen.has(row.added_by))seen.set(row.added_by,{name:row.added_by_name,isOwner:false,recipeCount:0,accepted:true});
           seen.get(row.added_by).recipeCount++;
         }
         const contributors=[...seen.values()];
-        // Members who joined but haven't added recipes yet
-        const totalMembers=(sharedBook.member_ids||[]).length+1;
-        const silent=Math.max(0,totalMembers-contributors.length);
+        const silent=0; // everyone is now named
         function initials(name){return(name||"?").split(/\s+/).map(w=>w[0]?.toUpperCase()||"").slice(0,2).join("");}
         function avatarColor(name){const colors=["#3A5E42","#5E2A5E","#2A5E8C","#8C5E2A","#2A5E5E","#5E2A2A","#4A6E1A","#8C3A1A"];let h=0;for(const c of(name||""))h=(h*31+c.charCodeAt(0))%colors.length;return colors[h];}
         return(
@@ -2276,9 +2280,9 @@ async function sbGetBookByInvite(code) {
   const { data } = await sb.rpc("cookbook_by_invite", { code });
   return data?.[0] || null;
 }
-async function sbJoinCookbook(code) {
+async function sbJoinCookbook(code, displayName="") {
   const sb = getSupabase(); if (!sb) return null;
-  const { data } = await sb.rpc("join_cookbook", { code });
+  const { data } = await sb.rpc("join_cookbook", { code, display_name: displayName });
   return data;
 }
 
@@ -2430,7 +2434,8 @@ function AppInner(){
 
   async function handleJoin(){
     if(!joinPreview||!session)return;
-    await sbJoinCookbook(joinPreview.code);
+    const displayName=session.user.user_metadata?.full_name||session.user.email||"Member";
+    await sbJoinCookbook(joinPreview.code,displayName);
     const updated=await sbLoadMySharedBooks(session);
     setSharedBooks(updated);
     setJoinPreview(null);

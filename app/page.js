@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.37";
+const APP_VERSION = "2.38";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.38", title:"Eliminate voice readout distortion", items:[
+    "The mic is now fully blocked while a step is read aloud — the watchdog was reopening it mid-speech",
+  ]},
   { v:"2.37", title:"Reinstate audio tones", items:[
     "Activation chime and wake-phrase double-beep are back — distortion fix was separate",
   ]},
@@ -474,17 +477,25 @@ function CookMode({recipe,onClose}){
   // then restart recognition automatically when speech ends.
   function speak(text){
     if(!window.speechSynthesis)return;
+    // Block ALL recognition (and the watchdog) for the duration of speech so the mic
+    // never reactivates mid-readout — that simultaneous mic+speaker is the distortion.
+    speakingRef.current=true;
     try{voiceRef.current?.abort();}catch{}
     voiceRef.current=null;
     voiceSpawningRef.current=false;
     window.speechSynthesis.cancel();
     const u=new SpeechSynthesisUtterance(text);
     u.lang="en-AU";u.rate=0.92;u.pitch=1;
-    u.onend=()=>{ if(voiceShouldRunRef.current) setTimeout(spawnRecognition,400); };
-    u.onerror=()=>{ if(voiceShouldRunRef.current) setTimeout(spawnRecognition,400); };
+    const resume=()=>{ speakingRef.current=false; if(voiceShouldRunRef.current) setTimeout(spawnRecognition,450); };
+    u.onend=resume;
+    u.onerror=resume;
+    // Safety net: if onend never fires (mobile quirk), clear the flag after a max duration
+    const guardMs=Math.min(20000, 1800 + text.length*70);
+    setTimeout(()=>{ if(speakingRef.current) resume(); }, guardMs);
     window.speechSynthesis.speak(u);
   }
   const voiceShouldRunRef=useRef(false);
+  const speakingRef=useRef(false);      // true while a step is being read aloud
   const voiceSpawningRef=useRef(false); // prevents concurrent instances
   const armedRef=useRef(false);         // true after wake phrase, awaiting a command
   const armTimerRef=useRef(null);
@@ -574,6 +585,7 @@ function CookMode({recipe,onClose}){
   function spawnRecognition(){
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     if(!SR||!voiceShouldRunRef.current)return;
+    if(speakingRef.current)return; // never open the mic while reading a step aloud
     // One live instance at a time. The previous one has already ended (onend cleared
     // these refs) by the time we restart — do NOT abort here, that caused a restart loop.
     if(voiceSpawningRef.current||voiceRef.current)return;
@@ -620,9 +632,11 @@ function CookMode({recipe,onClose}){
   function stopVoice(){
     voiceShouldRunRef.current=false;
     voiceSpawningRef.current=false;
+    speakingRef.current=false;
     disarm();
     try{voiceRef.current?.abort();}catch{}
     voiceRef.current=null;
+    try{window.speechSynthesis?.cancel();}catch{}
     setVoiceActive(false);setVoiceHint("");
   }
   useEffect(()=>()=>{voiceShouldRunRef.current=false;clearTimeout(armTimerRef.current);try{voiceRef.current?.abort();}catch{};window.speechSynthesis?.cancel();},[]);
@@ -631,7 +645,7 @@ function CookMode({recipe,onClose}){
   useEffect(()=>{
     if(!voiceActive)return;
     const iv=setInterval(()=>{
-      if(voiceShouldRunRef.current && !voiceRef.current && !voiceSpawningRef.current) spawnRecognition();
+      if(voiceShouldRunRef.current && !speakingRef.current && !voiceRef.current && !voiceSpawningRef.current) spawnRecognition();
     },800);
     return()=>clearInterval(iv);
   },[voiceActive]);

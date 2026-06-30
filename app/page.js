@@ -1655,7 +1655,7 @@ const AISLES=[
   {name:"🥩 Meat & Seafood",words:["chicken","beef","pork","lamb","mince","steak","bacon","ham","sausage","chorizo","prawn","prawns","fish","salmon","tuna","shrimp","seafood","turkey","duck","veal","brisket","rib","ribs","fillet","breast","thigh","wing","cutlet","schnitzel","meatball","anchovy","anchovies","scallop","crab","lobster","squid","calamari"]},
   {name:"🥛 Dairy & Eggs",words:["milk","cream","butter","cheese","yoghurt","yogurt","egg","eggs","parmesan","mozzarella","cheddar","feta","ricotta","brie","halloumi","sour cream","cream cheese","condensed milk","evaporated milk","ghee"]},
   {name:"🍞 Bakery & Bread",words:["bread","sourdough","baguette","roll","rolls","pita","tortilla","wrap","croissant","bagel","muffin","bun","loaf","crouton","breadcrumb","breadcrumbs"]},
-  {name:"🥫 Pantry & Canned",words:["flour","sugar","salt","pepper","oil","olive oil","vinegar","soy sauce","sauce","stock","broth","pasta","rice","noodle","noodles","lentil","lentils","chickpea","chickpeas","can","canned","tomato paste","coconut milk","coconut cream","honey","syrup","jam","peanut butter","nutella","oats","cereal","biscuit","cracker","cornstarch","baking powder","baking soda","yeast","vanilla","cocoa","chocolate","mustard","ketchup","mayonnaise","relish","chutney","curry paste","hoisin","oyster sauce","fish sauce","worcestershire","tabasco","sriracha","harissa"]},
+  {name:"🥫 Pantry & Canned",words:["flour","almond meal","almond flour","sugar","salt","pepper","oil","olive oil","vinegar","soy sauce","sauce","stock","broth","pasta","rice","noodle","noodles","lentil","lentils","chickpea","chickpeas","can","canned","tomato paste","coconut milk","coconut cream","coconut","honey","maple syrup","syrup","jam","peanut butter","almond butter","cashew butter","nut butter","tahini","nutella","oats","cereal","biscuit","cracker","cornstarch","baking powder","baking soda","yeast","vanilla","cocoa","chocolate","mustard","ketchup","mayonnaise","relish","chutney","curry paste","hoisin","oyster sauce","fish sauce","worcestershire","tabasco","sriracha","harissa","almond","almonds","cashew","cashews","walnut","walnuts","pecan","pecans","peanut","peanuts","pistachio","seeds","chia","flaxseed","raisin","raisins","sultana","sultanas","date","dates","dried fruit","protein powder"]},
   {name:"🧊 Frozen",words:["frozen","ice cream","gelato","sorbet","popsicle","fish fingers","frozen peas","frozen corn","frozen berries","pastry","puff pastry","shortcrust"]},
   {name:"🧃 Drinks & Beverages",words:["water","juice","wine","beer","coffee","tea","milk","soda","sparkling","mineral water","stock","broth"]},
   {name:"🧂 Spices & Condiments",words:["cumin","paprika","turmeric","cinnamon","cayenne","chilli","chili","oregano","sage","cardamom","nutmeg","cloves","coriander seed","fennel seed","star anise","allspice","curry powder","garam masala","sumac","za'atar","dried","spice","seasoning","dressing","marinade"]},
@@ -1663,8 +1663,17 @@ const AISLES=[
 const OTHER_AISLE="🛒 Other";
 function getAisle(text){
   const t=text.toLowerCase();
-  for(const a of AISLES){if(a.words.some(w=>t.includes(w)))return a.name;}
-  return OTHER_AISLE;
+  // Longest matching keyword wins, so "almond butter" (Pantry) beats the generic "butter" (Dairy).
+  // Word-boundary matching avoids "ham" matching "graham" etc.
+  let best=OTHER_AISLE,bestLen=0;
+  for(const a of AISLES){
+    for(const w of a.words){
+      if(w.length<=bestLen)continue;
+      const re=new RegExp(`(^|[^a-z])${w.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}([^a-z]|$)`);
+      if(re.test(t)){best=a.name;bestLen=w.length;}
+    }
+  }
+  return best;
 }
 
 function GroceryTab(){

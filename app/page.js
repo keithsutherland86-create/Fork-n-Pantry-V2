@@ -9,8 +9,9 @@ const APP_VERSION = "2.30";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
-  { v:"2.30", title:"Back button fixed when deep in Cook Mode", items:[
+  { v:"2.30", title:"Back button & voice improvements", items:[
     "Pressing back in Cook Mode now reliably returns to the recipe, then to the recipe list",
+    "'What's next' now advances to the next step AND reads it aloud",
   ]},
   { v:"2.29", title:"Voice reliability & audio feedback", items:[
     "Audible chime when voice mode activates; soft tone confirms each command",
@@ -469,7 +470,7 @@ function CookMode({recipe,onClose}){
   function act(cmd){
     if(cmd==="whatsnext"){
       const nextIdx=Math.min(stepRef.current+1,total-1);
-      if(nextIdx>stepRef.current){speak(steps[nextIdx]);setVoiceHint(`→ Step ${nextIdx+1}`);}
+      if(nextIdx>stepRef.current){setStep(nextIdx);speak(steps[nextIdx]);setVoiceHint(`→ Step ${nextIdx+1}`);}
       else{speak("That's the last step.");setVoiceHint("Last step");}
     }
     else if(cmd==="repeat"){speak(steps[stepRef.current]);setVoiceHint("↻ Reading step");}

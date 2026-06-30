@@ -1125,6 +1125,12 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
         <span style={{fontSize:22}}>{sharedBook.emoji}</span>
         <span className="serif" style={{fontWeight:600,fontSize:19,color:"var(--forest)",flex:1}}>{sharedBook.name}</span>
         <div style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:12,padding:"3px 9px",fontSize:10,fontWeight:700,color:"var(--moss)"}}>🌐 Shared</div>
+        {sharedBook.owner_id!==session?.user?.id&&(
+          <button onClick={async()=>{if(!confirm("Leave this cookbook?"))return;await sbLeaveCookbook(sharedBook.id);setSelectedShared(null);if(onRefreshShared)onRefreshShared();}}
+            style={{background:"#FEE2E2",border:"1px solid #FECACA",borderRadius:12,padding:"3px 9px",fontSize:10,fontWeight:700,color:"#991B1B",cursor:"pointer",flexShrink:0}}>
+            Leave
+          </button>
+        )}
       </div>
       <div style={{padding:"0 16px 6px",fontSize:12,color:"var(--mist)"}}>{sharedRecipes.length} recipe{sharedRecipes.length!==1?"s":""}</div>
       {/* Collaborators strip */}
@@ -2285,6 +2291,10 @@ async function sbJoinCookbook(code, displayName="") {
   const { data } = await sb.rpc("join_cookbook", { code, display_name: displayName });
   return data;
 }
+async function sbLeaveCookbook(cookbookId) {
+  const sb = getSupabase(); if (!sb) return;
+  await sb.rpc("leave_cookbook", { p_cookbook_id: cookbookId });
+}
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 function AppInner(){
@@ -2353,6 +2363,17 @@ function AppInner(){
       return()=>subscription.unsubscribe();
     }
   },[]);
+
+  // Real-time subscription: refresh sharedBooks whenever any shared_cookbooks row changes
+  useEffect(()=>{
+    if(!session)return;
+    const sb=getSupabase();if(!sb)return;
+    const chan=sb.channel("shared-books-rt")
+      .on("postgres_changes",{event:"*",schema:"public",table:"shared_cookbooks"},
+        ()=>sbLoadMySharedBooks(session).then(setSharedBooks))
+      .subscribe();
+    return()=>chan.unsubscribe();
+  },[session]);
 
   async function syncOnLogin(userId,localRecipes){
     setSyncStatus("syncing");

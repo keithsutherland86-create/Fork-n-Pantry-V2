@@ -116,6 +116,7 @@ export async function POST(req) {
   }
 
   const isUrl = input.trim().startsWith("http");
+  const isSocial = /(instagram\.com|tiktok\.com|facebook\.com|fb\.watch)/i.test(input);
   let pageText = "", ogImage = "", ogTitle = "", caption = "";
 
   // ── oEmbed for Instagram / TikTok — gets caption text without auth ────────────
@@ -255,7 +256,10 @@ Dig deeper into the content below. Infer and reconstruct ingredients and steps f
   // No text came back (e.g. only a non-text block, or hit max_tokens before any output)
   if(!text.trim()){
     console.error("Claude returned no text. stop_reason:", data.stop_reason, "content:", JSON.stringify(data.content));
-    return Response.json({ ok:false, error:`No recipe text returned (${data.stop_reason||"empty"})` }, { status:422 });
+    const msg = isSocial
+      ? "Instagram/TikTok didn't share this post's caption. Open the post, copy its full caption text, and paste that here instead of the link."
+      : `No recipe text returned (${data.stop_reason||"empty"})`;
+    return Response.json({ ok:false, error: msg }, { status:422 });
   }
 
   try {
@@ -263,7 +267,10 @@ Dig deeper into the content below. Infer and reconstruct ingredients and steps f
     // Guard against a successful-but-empty result becoming a blank "Untitled" card
     const hasContent = parsed && (parsed.title || (parsed.ingredients||[]).length || (parsed.steps||[]).length);
     if(!hasContent){
-      return Response.json({ ok:false, error:"Couldn't extract a recipe from that — try a different link or manual entry." }, { status:422 });
+      const msg = isSocial
+        ? "Instagram/TikTok didn't share this post's caption. Open the post, copy its full caption text, and paste that here instead of the link."
+        : "Couldn't extract a recipe from that — try a different link or manual entry.";
+      return Response.json({ ok:false, error: msg }, { status:422 });
     }
 
     let finalImage = ogImage;

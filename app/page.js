@@ -1159,7 +1159,7 @@ function CollaboratorsStrip({book,recipeRows=[],sessionUserId}){
     </div>
   );
 }
-function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,session,sharedBooks=[],onRefreshShared}){
+function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,onAdd,session,sharedBooks=[],onRefreshShared}){
   const[showNew,setShowNew]=useState(false);
   const[newName,setNewName]=useState("");
   const[newEmoji,setNewEmoji]=useState(BOOK_EMOJIS[0]);
@@ -1172,10 +1172,18 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
   const[loadingShared,setLoadingShared]=useState(false);
   const[addingToShared,setAddingToShared]=useState(false);
   const[publishing,setPublishing]=useState(false);
+  const[ownerSharedRecipes,setOwnerSharedRecipes]=useState([]); // collaborator-added recipes for the owner's own shared book
 
   function createBook(){if(!newName.trim())return;const u=[...books,{id:Date.now().toString(),name:newName.trim(),color:CAT_COLORS[books.length%CAT_COLORS.length],emoji:newEmoji,recipeIds:[]}];setBooks(u);save(KEYS.c,u);setNewName("");setShowNew(false);}
   function deleteBook(id){const u=books.filter(c=>c.id!==id);setBooks(u);save(KEYS.c,u);if(selected===id)setSelected(null);}
-  function addToBook(bookId,recipeId){const u=books.map(c=>c.id===bookId?{...c,recipeIds:[...new Set([...(c.recipeIds||[]),recipeId])]}:c);setBooks(u);save(KEYS.c,u);setAddingTo(null);}
+  function addToBook(bookId,recipeId){
+    const u=books.map(c=>c.id===bookId?{...c,recipeIds:[...new Set([...(c.recipeIds||[]),recipeId])]}:c);setBooks(u);save(KEYS.c,u);setAddingTo(null);
+    // If this book is shared, push the recipe to Supabase so collaborators see it too
+    if(session&&sharedBooks.some(sb=>sb.id===bookId)){
+      const recipe=recipes.find(r=>r.id===recipeId);
+      if(recipe)sbAddSharedRecipe(bookId,recipe,session);
+    }
+  }
   function removeFromBook(bookId,recipeId){const u=books.map(c=>c.id===bookId?{...c,recipeIds:(c.recipeIds||[]).filter(id=>id!==recipeId)}:c);setBooks(u);save(KEYS.c,u);}
 
   // [PRO] Share cookbook — publish to Supabase and generate invite link
@@ -1205,7 +1213,24 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
   },[selectedShared]);
 
   const book=books.find(c=>c.id===selected);
+  const sharedMatch=book?sharedBooks.find(sb=>sb.id===book.id):null; // is this local book also a shared cookbook?
+
+  // When viewing a local book that is also shared, load recipes collaborators added (live)
+  useEffect(()=>{
+    if(!sharedMatch){setOwnerSharedRecipes([]);return;}
+    sbLoadSharedRecipes(sharedMatch.id).then(setOwnerSharedRecipes);
+    const sb=getSupabase();if(!sb)return;
+    const chan=sb.channel("owner-scr-"+sharedMatch.id)
+      .on("postgres_changes",{event:"*",schema:"public",table:"shared_cookbook_recipes",filter:`cookbook_id=eq.${sharedMatch.id}`},
+        ()=>sbLoadSharedRecipes(sharedMatch.id).then(setOwnerSharedRecipes))
+      .subscribe();
+    return()=>chan.unsubscribe();
+  },[sharedMatch?.id]);
+
   const bookRecipes=book?(book.recipeIds||[]).map(id=>recipes.find(r=>r.id===id)).filter(Boolean):[];
+  // Collaborator-added recipes not already saved locally in this book
+  const localIds=new Set(book?(book.recipeIds||[]):[]);
+  const collabRecipes=ownerSharedRecipes.filter(row=>row.added_by!==session?.user?.id&&!localIds.has(row.recipe?.id));
   const notInBook=book?recipes.filter(r=>!(book.recipeIds||[]).includes(r.id)):[];
   const inp={background:"var(--cream)",border:"1.5px solid var(--parchment)",borderRadius:"var(--r-md)",padding:"11px 14px",fontSize:14,outline:"none",color:"var(--ink)",width:"100%"};
 
@@ -1292,11 +1317,27 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
           :null}
         <button onClick={()=>shareBook(book)} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>📤 {sharedBooks.some(sb=>sb.id===book.id)?"Invite":"Share"}</button>
       </div>
-      {sharedBooks.some(sb=>sb.id===book.id)&&<CollaboratorsStrip book={sharedBooks.find(sb=>sb.id===book.id)} sessionUserId={session?.user?.id}/>}
-      <div style={{padding:"0 16px 6px",fontSize:12,color:"var(--mist)"}}>{bookRecipes.length} recipe{bookRecipes.length!==1?"s":""}</div>
+      {sharedMatch&&<CollaboratorsStrip book={sharedMatch} recipeRows={ownerSharedRecipes} sessionUserId={session?.user?.id}/>}
+      <div style={{padding:"0 16px 6px",fontSize:12,color:"var(--mist)"}}>{bookRecipes.length+collabRecipes.length} recipe{(bookRecipes.length+collabRecipes.length)!==1?"s":""}</div>
       <div style={{padding:"4px 16px"}}>
         {bookRecipes.map(r=><MiniCard key={r.id} recipe={r} onOpen={setRecipeModal} onRemove={()=>removeFromBook(book.id,r.id)}/>)}
-        {bookRecipes.length===0&&<div style={{textAlign:"center",paddingTop:50,color:"var(--mist)",fontSize:14}}>No recipes yet — add some below</div>}
+        {/* Recipes added by collaborators (live from Supabase) */}
+        {collabRecipes.map(row=>(
+          <div key={row.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 0",borderBottom:"1px solid var(--parchment)",cursor:"pointer"}} onClick={()=>setRecipeModal(row.recipe)}>
+            <div style={{width:50,height:50,borderRadius:12,overflow:"hidden",flexShrink:0}}><RImg recipe={row.recipe} style={{width:"100%",height:"100%"}}/></div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:14,color:"var(--forest)"}}>{row.recipe?.title}</div>
+              <div style={{fontSize:11,color:"var(--moss)",marginTop:2}}>✛ Added by {row.added_by_name}</div>
+            </div>
+            <button onClick={e=>{e.stopPropagation();
+              if(onAdd)onAdd(row.recipe);
+              // add to local book only — it's already in Supabase, so don't re-push (would duplicate)
+              const u=books.map(c=>c.id===book.id?{...c,recipeIds:[...new Set([...(c.recipeIds||[]),row.recipe.id])]}:c);setBooks(u);save(KEYS.c,u);
+            }}
+              title="Save to my recipes" style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,width:30,height:30,fontSize:16,fontWeight:700,color:"var(--moss)",cursor:"pointer",flexShrink:0}}>↓</button>
+          </div>
+        ))}
+        {bookRecipes.length===0&&collabRecipes.length===0&&<div style={{textAlign:"center",paddingTop:50,color:"var(--mist)",fontSize:14}}>No recipes yet — add some below</div>}
       </div>
       <div style={{padding:"12px 16px 0"}}>
         <button onClick={()=>setAddingTo(book.id)} className="btn-ghost" style={{width:"100%",padding:"13px 0",fontSize:14,borderRadius:"var(--r-md)"}}>+ Add recipes to {book.name}</button>
@@ -2000,7 +2041,7 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
           <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4,paddingBottom:6,borderBottom:"1.5px solid var(--parchment)"}}>About</div>
           <div style={row}>
             <div style={label}>App Version</div>
-            <span style={{fontSize:13,color:"var(--mist)"}}>Fork n Pantry v2.12</span>
+            <span style={{fontSize:13,color:"var(--mist)"}}>Fork n Pantry v2.13</span>
           </div>
           <div style={{marginTop:14,padding:"14px 16px",background:"var(--sage-pale)",borderRadius:"var(--r-md)",border:"1px solid var(--sage-lt)"}}>
             <div className="serif" style={{fontWeight:600,fontSize:16,color:"var(--forest)",marginBottom:6}}>Fork n Pantry</div>
@@ -2644,7 +2685,7 @@ function AppInner(){
       {showHelp&&<HelpModal onClose={()=>setShowHelp(false)}/>}
       <RecipeModal recipe={globalModalRecipe} onClose={()=>setGlobalModalRecipe(null)} onUpdate={r=>{updateRecipe(r);setGlobalModalRecipe(r);}}/>
       {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")} onImportFail={()=>showToast("error",null,"Import failed — couldn't read that recipe")} onRefresh={session?async()=>{setSyncStatus("syncing");const cloud=await cloudLoad(session.user.id);if(cloud){setRecipes(cloud);save(KEYS.r,cloud);setSyncStatus("synced");}else setSyncStatus("idle");}:null}/>}
-      {tab==="categories"&&<CookbooksTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe} session={session} sharedBooks={sharedBooks} onRefreshShared={()=>sbLoadMySharedBooks(session).then(setSharedBooks)}/>}
+      {tab==="categories"&&<CookbooksTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe} onAdd={addRecipe} session={session} sharedBooks={sharedBooks} onRefreshShared={()=>sbLoadMySharedBooks(session).then(setSharedBooks)}/>}
       {joinPreview&&(
         <div style={{position:"fixed",inset:0,background:"rgba(15,24,17,.6)",backdropFilter:"blur(5px)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
           <div style={{background:"var(--linen)",borderRadius:"var(--r-xl)",padding:"28px 24px",maxWidth:340,width:"100%",textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>

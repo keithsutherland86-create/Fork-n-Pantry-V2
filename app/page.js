@@ -108,17 +108,28 @@ function pImg(url){
 function RImg({recipe,style:st={},className=""}){
   const[err,setErr]=useState(false);
   const[loaded,setLoaded]=useState(false);
+  const[retries,setRetries]=useState(0);
+  const retryTimer=useRef(null);
   const src=recipe?.ogImage?pImg(recipe.ogImage):null;
-  useEffect(()=>{setErr(false);setLoaded(false);},[recipe?.ogImage]);
+  useEffect(()=>{setErr(false);setLoaded(false);setRetries(0);return()=>clearTimeout(retryTimer.current);},[recipe?.ogImage]);
+  function onError(){
+    if(retries<2){
+      // Silent retry after a short delay — proxy timeouts are often transient
+      retryTimer.current=setTimeout(()=>{setRetries(r=>r+1);setErr(false);},2500*(retries+1));
+    } else {
+      setErr(true);
+    }
+  }
+  const emojiSize="clamp(18px, 40%, 44px)";
   if(src&&!err) return(
     <div style={{position:"relative",overflow:"hidden",...st}} className={className}>
-      {!loaded&&<div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 30% 30%,${tb(recipe.tags?.[0])},var(--parchment))`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"min(42px,38%)"}}>{recipe.emoji||"🍽️"}</div>}
-      <img src={src} alt="" onError={()=>setErr(true)} onLoad={()=>setLoaded(true)}
+      {!loaded&&<div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 30% 30%,${tb(recipe.tags?.[0])},var(--parchment))`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:emojiSize}}>{recipe.emoji||"🍽️"}</div>}
+      <img src={src} alt="" onError={onError} onLoad={()=>setLoaded(true)}
         style={{width:"100%",height:"100%",objectFit:"cover",transition:"opacity .4s",opacity:loaded?1:0,display:"block"}}/>
     </div>
   );
   return(
-    <div style={{display:"flex",alignItems:"center",justifyContent:"center",background:`radial-gradient(ellipse at 30% 30%,${tb(recipe?.tags?.[0])},var(--parchment) 70%)`,fontSize:"min(42px,38%)",overflow:"hidden",...st}} className={className}>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",background:`radial-gradient(ellipse at 30% 30%,${tb(recipe?.tags?.[0])},var(--parchment) 70%)`,fontSize:emojiSize,overflow:"hidden",...st}} className={className}>
       {recipe?.emoji||"🍽️"}
     </div>
   );

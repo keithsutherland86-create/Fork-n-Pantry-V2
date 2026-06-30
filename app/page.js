@@ -41,6 +41,20 @@ function parseTimeSecs(str){
 }
 function fmtTime(secs){const m=Math.floor(secs/60),s=secs%60;return`${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;}
 
+// Splits step text into plain strings and ⏱ timer buttons for detected time patterns
+const TIME_RE=/\b((?:\d+\s*(?:hour|hr|h)s?\s*)?(?:\d+\s*(?:minute|min|m)s?)\b|\d+\s*(?:hour|hr|h)s?\b|\d+\s*(?:second|sec|s)s?\b)/gi;
+function renderStepWithTimers(text,onTimer,btnStyle={}){
+  const parts=[];let last=0,key=0;
+  for(const m of text.matchAll(TIME_RE)){
+    if(m.index>last)parts.push(text.slice(last,m.index));
+    const match=m[0];
+    parts.push(<button key={key++} onClick={()=>onTimer(match,match)} style={{display:"inline-flex",alignItems:"center",gap:3,background:"rgba(74,154,114,.18)",border:"1px solid rgba(74,154,114,.4)",borderRadius:20,padding:"1px 8px",fontSize:"0.9em",fontWeight:700,cursor:"pointer",verticalAlign:"middle",lineHeight:1.4,...btnStyle}}>⏱ {match}</button>);
+    last=m.index+match.length;
+  }
+  if(last<text.length)parts.push(text.slice(last));
+  return parts.length>1?parts:text;
+}
+
 // ─── Ingredient aggregation ───────────────────────────────────────────────────
 function parseIngText(text){
   const ua={grams:"g",gram:"g",g:"g",kg:"kg",oz:"oz",ounce:"oz",ounces:"oz",lb:"lb",pound:"lb",pounds:"lb",lbs:"lb",ml:"ml",millilitre:"ml",millilitres:"ml",l:"L",litre:"L",litres:"L",liter:"L",liters:"L",tsp:"tsp",teaspoon:"tsp",teaspoons:"tsp",tbsp:"tbsp",tablespoon:"tbsp",tablespoons:"tbsp",cup:"cup",cups:"cup","fl oz":"fl oz"};
@@ -297,6 +311,8 @@ function getStepEmojis(text){
 function CookMode({recipe,onClose}){
   const[step,setStep]=useState(0);
   const[ingsOpen,setIngsOpen]=useState(false);
+  const[timer,setTimer]=useState(null);
+  const timerRef=useRef(null);
   const steps=recipe.steps||[];
   const ings=recipe.ingredients||[];
   const total=steps.length;
@@ -305,6 +321,16 @@ function CookMode({recipe,onClose}){
     (async()=>{try{wakeLockRef.current=await navigator.wakeLock?.request("screen");}catch{}})();
     return()=>{try{wakeLockRef.current?.release();}catch{}};
   },[]);
+  useEffect(()=>{
+    if(timer?.running){
+      timerRef.current=setInterval(()=>setTimer(t=>{
+        if(!t||t.secs<=0){clearInterval(timerRef.current);return t?{...t,secs:0,running:false}:null;}
+        return{...t,secs:t.secs-1};
+      }),1000);
+    } else clearInterval(timerRef.current);
+    return()=>clearInterval(timerRef.current);
+  },[timer?.running]);
+  function startTimer(label,str){const s=parseTimeSecs(str);if(s){clearInterval(timerRef.current);setTimer({label,total:s,secs:s,running:true});}}
   if(total===0)return null;
   const pct=Math.round((step/total)*100);
   const hasStr=ings.length>0&&typeof ings[0]==="object";
@@ -340,9 +366,19 @@ function CookMode({recipe,onClose}){
         <div style={{marginTop:5,fontSize:11,color:"rgba(255,255,255,.45)"}}>{pct}% · Step {step+1} of {total}</div>
       </div>
 
+      {/* Timer banner (cook mode) */}
+      {timer&&(
+        <div style={{background:timer.secs===0?"#7F1D1D":timer.secs<30?"#78350F":"rgba(74,154,114,.25)",border:"1px solid rgba(255,255,255,.15)",margin:"0 16px",borderRadius:"var(--r-md)",padding:"10px 14px",display:"flex",alignItems:"center",gap:10,flexShrink:0,position:"relative",zIndex:1}}>
+          <span style={{fontSize:12,fontWeight:600,color:"rgba(255,255,255,.8)",flex:1}}>{timer.secs===0?"⏰ Time's up!":timer.label}</span>
+          <span style={{fontFamily:"monospace",fontSize:22,fontWeight:700,color:"#fff",minWidth:52,textAlign:"center"}}>{fmtTime(timer.secs)}</span>
+          {timer.secs>0&&<button onClick={()=>setTimer(t=>({...t,running:!t.running}))} style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:20,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>{timer.running?"Pause":"Resume"}</button>}
+          <button onClick={()=>{clearInterval(timerRef.current);setTimer(null);}} style={{background:"none",border:"none",color:"rgba(255,255,255,.6)",fontSize:20,cursor:"pointer",lineHeight:1}}>×</button>
+        </div>
+      )}
+
       {/* Step text */}
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 32px",textAlign:"center",position:"relative",zIndex:1}}>
-        <div className="serif" style={{fontSize:28,fontWeight:600,color:"#FFFFFF",lineHeight:1.6,maxWidth:480,textShadow:"0 2px 16px rgba(0,0,0,.6)"}}>{steps[step]}</div>
+        <div className="serif" style={{fontSize:28,fontWeight:600,color:"#FFFFFF",lineHeight:1.6,maxWidth:480,textShadow:"0 2px 16px rgba(0,0,0,.6)"}}>{renderStepWithTimers(steps[step],startTimer,{color:"#fff",borderColor:"rgba(122,184,154,.6)",background:"rgba(122,184,154,.15)"})}</div>
       </div>
 
       {/* Ingredients drawer */}
@@ -699,7 +735,7 @@ function RecipeModal({recipe,onClose,onUpdate}){
               {recipe.steps.map((step,i)=>(
                 <li key={i} style={{fontSize:14,color:"var(--ink)",marginBottom:16,lineHeight:1.75,display:"flex",gap:13,alignItems:"flex-start"}}>
                   <span style={{background:"linear-gradient(145deg,var(--moss),var(--forest))",color:"#fff",borderRadius:"50%",width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0,marginTop:1,boxShadow:"var(--sh-xs)"}}>{i+1}</span>
-                  <span>{step}</span>
+                  <span>{renderStepWithTimers(step,(label,str)=>startTimer(label,str))}</span>
                 </li>
               ))}
             </ol>
@@ -1066,6 +1102,41 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared,o
 
 // ─── COOKBOOKS TAB (replaces Categories) ─────────────────────────────────────
 const BOOK_EMOJIS=["📗","📘","📙","📕","📒","📔","🍳","🥘","🍜","🥗","🍱","🧆","🥩","🥦","🌮","🍰","🎂","🫕"];
+
+// Shows owner + members who have joined a shared cookbook
+function CollaboratorsStrip({book,recipeRows=[],sessionUserId}){
+  if(!book)return null;
+  const seen=new Map();
+  seen.set(book.owner_id,{name:book.owner_name,isOwner:true,recipeCount:0});
+  (book.member_ids||[]).forEach((id,i)=>{
+    const name=(book.member_names||[])[i]||"Member";
+    if(!seen.has(id))seen.set(id,{name,isOwner:false,recipeCount:0});
+  });
+  for(const row of recipeRows){
+    if(!seen.has(row.added_by))seen.set(row.added_by,{name:row.added_by_name,isOwner:false,recipeCount:0});
+    seen.get(row.added_by).recipeCount++;
+  }
+  const contributors=[...seen.values()];
+  const memberCount=(book.member_ids||[]).length;
+  function initials(name){return(name||"?").split(/\s+/).map(w=>w[0]?.toUpperCase()||"").slice(0,2).join("");}
+  function avatarColor(name){const colors=["#3A5E42","#5E2A5E","#2A5E8C","#8C5E2A","#2A5E5E","#5E2A2A","#4A6E1A","#8C3A1A"];let h=0;for(const c of(name||""))h=(h*31+c.charCodeAt(0))%colors.length;return colors[h];}
+  return(
+    <div style={{padding:"8px 16px 12px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+      {contributors.map((c,i)=>(
+        <div key={i} title={`${c.name}${c.isOwner?" (owner)":""} · ${c.recipeCount} recipe${c.recipeCount!==1?"s":""}`}
+          style={{display:"flex",alignItems:"center",gap:6,background:"var(--cream)",border:"1px solid var(--parchment)",borderRadius:20,padding:"4px 10px 4px 4px"}}>
+          <div style={{width:26,height:26,borderRadius:"50%",background:avatarColor(c.name),display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0}}>
+            {initials(c.name)}
+          </div>
+          <span style={{fontSize:12,fontWeight:600,color:"var(--forest)"}}>{c.name?.split(" ")[0]}</span>
+          {c.isOwner&&<span style={{fontSize:10}}>👑</span>}
+          {c.recipeCount>0&&<span style={{fontSize:10,color:"var(--mist)"}}>·{c.recipeCount}</span>}
+        </div>
+      ))}
+      {memberCount===0&&<span style={{fontSize:12,color:"var(--mist)"}}>No one's joined yet — share the invite link</span>}
+    </div>
+  );
+}
 function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,session,sharedBooks=[],onRefreshShared}){
   const[showNew,setShowNew]=useState(false);
   const[newName,setNewName]=useState("");
@@ -1124,7 +1195,15 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
         <button onClick={()=>setSelectedShared(null)} className="btn-ghost" style={{padding:"7px 13px",fontSize:13}}>← Back</button>
         <span style={{fontSize:22}}>{sharedBook.emoji}</span>
         <span className="serif" style={{fontWeight:600,fontSize:19,color:"var(--forest)",flex:1}}>{sharedBook.name}</span>
-        <div style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:12,padding:"3px 9px",fontSize:10,fontWeight:700,color:"var(--moss)"}}>🌐 Shared</div>
+        {sharedBook.owner_id===session?.user?.id&&(
+          <button onClick={async()=>{
+            const link=`${window.location.origin}/?join=${sharedBook.invite_code}`;
+            if(navigator.share){await navigator.share({title:sharedBook.name,text:"Join my cookbook!",url:link}).catch(()=>{});}
+            else{await navigator.clipboard.writeText(link).catch(()=>{});alert("Invite link copied!");}
+          }} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:12,padding:"3px 9px",fontSize:10,fontWeight:700,color:"var(--moss)",cursor:"pointer",flexShrink:0}}>
+            📤 Invite
+          </button>
+        )}
         {sharedBook.owner_id!==session?.user?.id&&(
           <button onClick={async()=>{if(!confirm("Leave this cookbook?"))return;await sbLeaveCookbook(sharedBook.id);setSelectedShared(null);if(onRefreshShared)onRefreshShared();}}
             style={{background:"#FEE2E2",border:"1px solid #FECACA",borderRadius:12,padding:"3px 9px",fontSize:10,fontWeight:700,color:"#991B1B",cursor:"pointer",flexShrink:0}}>
@@ -1133,42 +1212,7 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
         )}
       </div>
       <div style={{padding:"0 16px 6px",fontSize:12,color:"var(--mist)"}}>{sharedRecipes.length} recipe{sharedRecipes.length!==1?"s":""}</div>
-      {/* Collaborators strip */}
-      {(()=>{
-        // Build contributor list from recipe authors + owner
-        const seen=new Map();
-        seen.set(sharedBook.owner_id,{name:sharedBook.owner_name,isOwner:true,recipeCount:0,accepted:true});
-        // Add named members who accepted invite (member_ids and member_names are parallel arrays)
-        (sharedBook.member_ids||[]).forEach((id,i)=>{
-          const name=(sharedBook.member_names||[])[i]||"Member";
-          if(!seen.has(id))seen.set(id,{name,isOwner:false,recipeCount:0,accepted:true});
-        });
-        // Add recipe counts from shared recipes
-        for(const row of sharedRecipes){
-          if(!seen.has(row.added_by))seen.set(row.added_by,{name:row.added_by_name,isOwner:false,recipeCount:0,accepted:true});
-          seen.get(row.added_by).recipeCount++;
-        }
-        const contributors=[...seen.values()];
-        const silent=0; // everyone is now named
-        function initials(name){return(name||"?").split(/\s+/).map(w=>w[0]?.toUpperCase()||"").slice(0,2).join("");}
-        function avatarColor(name){const colors=["#3A5E42","#5E2A5E","#2A5E8C","#8C5E2A","#2A5E5E","#5E2A2A","#4A6E1A","#8C3A1A"];let h=0;for(const c of(name||""))h=(h*31+c.charCodeAt(0))%colors.length;return colors[h];}
-        return(
-          <div style={{padding:"8px 16px 12px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-            {contributors.map((c,i)=>(
-              <div key={i} title={`${c.name}${c.isOwner?" (owner)":""} · ${c.recipeCount} recipe${c.recipeCount!==1?"s":""}`}
-                style={{display:"flex",alignItems:"center",gap:6,background:"var(--cream)",border:"1px solid var(--parchment)",borderRadius:20,padding:"4px 10px 4px 4px"}}>
-                <div style={{width:26,height:26,borderRadius:"50%",background:avatarColor(c.name),display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0}}>
-                  {initials(c.name)}
-                </div>
-                <span style={{fontSize:12,fontWeight:600,color:"var(--forest)"}}>{c.name?.split(" ")[0]}</span>
-                {c.isOwner&&<span style={{fontSize:10}}>👑</span>}
-                {c.recipeCount>0&&<span style={{fontSize:10,color:"var(--mist)"}}>·{c.recipeCount}</span>}
-              </div>
-            ))}
-            {silent>0&&<div style={{fontSize:12,color:"var(--mist)",padding:"4px 8px"}}>+{silent} member{silent!==1?"s":""}</div>}
-          </div>
-        );
-      })()}
+      <CollaboratorsStrip book={sharedBook} recipeRows={sharedRecipes} sessionUserId={session?.user?.id}/>
       <div style={{padding:"4px 16px"}}>
         {loadingShared&&<div style={{textAlign:"center",padding:"30px 0",color:"var(--mist)",fontSize:14}}>Loading…</div>}
         {sharedRecipes.map(row=>(
@@ -1221,8 +1265,12 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
         <button onClick={()=>setSelected(null)} className="btn-ghost" style={{padding:"7px 13px",fontSize:13}}>← Back</button>
         <span style={{fontSize:22}}>{book.emoji||"📗"}</span>
         <span className="serif" style={{fontWeight:600,fontSize:19,color:"var(--forest)",flex:1}}>{book.name}</span>
-        <button onClick={()=>shareBook(book)} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>📤 Share</button>
+        {sharedBooks.some(sb=>sb.id===book.id)
+          ?<div style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:12,padding:"3px 9px",fontSize:10,fontWeight:700,color:"var(--moss)"}}>🌐 Shared</div>
+          :null}
+        <button onClick={()=>shareBook(book)} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>📤 {sharedBooks.some(sb=>sb.id===book.id)?"Invite":"Share"}</button>
       </div>
+      {sharedBooks.some(sb=>sb.id===book.id)&&<CollaboratorsStrip book={sharedBooks.find(sb=>sb.id===book.id)} sessionUserId={session?.user?.id}/>}
       <div style={{padding:"0 16px 6px",fontSize:12,color:"var(--mist)"}}>{bookRecipes.length} recipe{bookRecipes.length!==1?"s":""}</div>
       <div style={{padding:"4px 16px"}}>
         {bookRecipes.map(r=><MiniCard key={r.id} recipe={r} onOpen={setRecipeModal} onRemove={()=>removeFromBook(book.id,r.id)}/>)}
@@ -2288,7 +2336,8 @@ async function sbGetBookByInvite(code) {
 }
 async function sbJoinCookbook(code, displayName="") {
   const sb = getSupabase(); if (!sb) return null;
-  const { data } = await sb.rpc("join_cookbook", { code, display_name: displayName });
+  const { data, error } = await sb.rpc("join_cookbook", { code, display_name: displayName });
+  if (error) throw new Error(error.message);
   return data;
 }
 async function sbLeaveCookbook(cookbookId) {
@@ -2456,11 +2505,15 @@ function AppInner(){
   async function handleJoin(){
     if(!joinPreview||!session)return;
     const displayName=session.user.user_metadata?.full_name||session.user.email||"Member";
-    await sbJoinCookbook(joinPreview.code,displayName);
-    const updated=await sbLoadMySharedBooks(session);
-    setSharedBooks(updated);
-    setJoinPreview(null);
-    setTab("categories");
+    try{
+      await sbJoinCookbook(joinPreview.code,displayName);
+      const updated=await sbLoadMySharedBooks(session);
+      setSharedBooks(updated);
+      setJoinPreview(null);
+      setTab("categories");
+    }catch(e){
+      alert("Couldn't join cookbook: "+e.message+"\n\nAsk the owner to check their Supabase SQL is up to date.");
+    }
   }
 
   return(

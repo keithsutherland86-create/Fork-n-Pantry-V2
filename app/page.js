@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.40";
+const APP_VERSION = "2.41";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.41", title:"Clear voice readout — mic fully releases first", items:[
+    "Step readouts wait for the microphone to fully turn off before speaking, removing the echo-cancellation distortion",
+  ]},
   { v:"2.40", title:"Mic reopens only after speech truly ends", items:[
     "The mic now waits for the spoken step to actually finish instead of a time estimate that cut long steps short",
   ]},
@@ -483,17 +486,18 @@ function CookMode({recipe,onClose}){
   // then restart recognition automatically when speech ends.
   function speak(text){
     if(!window.speechSynthesis)return;
-    // Block ALL recognition (and the watchdog) for the duration of speech so the mic
-    // never reactivates mid-readout — that simultaneous mic+speaker is the distortion.
+    // The mic's echo-canceller garbles TTS if recognition is still live, so we must wait
+    // for the mic to TRULY release before speaking. abort() is async — the hardware isn't
+    // freed until the recognition's onend fires (which sets voiceRef=null), and that can
+    // lag well past a fixed delay on mobile. So: block recognition, abort, then poll until
+    // voiceRef is null (mic released) before starting speech.
     speakingRef.current=true;
     clearInterval(speakPollRef.current);
+    clearInterval(speakWaitRef.current);
     try{voiceRef.current?.abort();}catch{}
-    voiceRef.current=null;
     voiceSpawningRef.current=false;
     window.speechSynthesis.cancel();
-    // Suspend the Web Audio context: an open AudioContext (kept alive for the chimes)
-    // holds an audio output route that can clash with SpeechSynthesis on mobile.
-    try{ _audioCtx&&_audioCtx.state==="running"&&_audioCtx.suspend(); }catch{}
+
     const u=new SpeechSynthesisUtterance(text);
     u.lang="en-AU";u.rate=0.92;u.pitch=1;
     let resumed=false;
@@ -501,26 +505,37 @@ function CookMode({recipe,onClose}){
       if(resumed)return; resumed=true;
       clearInterval(speakPollRef.current);
       speakingRef.current=false;
-      if(voiceShouldRunRef.current) setTimeout(spawnRecognition,450);
+      if(voiceShouldRunRef.current) setTimeout(spawnRecognition,500);
     };
     u.onend=resume;
     u.onerror=resume;
-    // Reopen the mic only once speech has ACTUALLY finished. Polling speechSynthesis.speaking
-    // is reliable where onend is flaky on mobile, and never reopens the mic mid-readout
-    // (a fixed time estimate did — it fired before long steps finished).
-    const start=Date.now();
-    setTimeout(()=>{ try{window.speechSynthesis.speak(u);}catch{} }, 220);
-    speakPollRef.current=setInterval(()=>{
-      const ss=window.speechSynthesis;
-      const elapsed=Date.now()-start;
-      // Past the initial 220ms delay, if nothing is speaking/pending, we're done.
-      if(elapsed>700 && ss && !ss.speaking && !ss.pending) resume();
-      else if(elapsed>30000) resume(); // absolute safety cap
-    },250);
+
+    function beginSpeech(){
+      try{window.speechSynthesis.speak(u);}catch{}
+      const start=Date.now();
+      // Reopen the mic only once speech has ACTUALLY finished (poll speechSynthesis.speaking;
+      // reliable where onend is flaky on mobile, and never reopens mid-readout).
+      speakPollRef.current=setInterval(()=>{
+        const ss=window.speechSynthesis;
+        const el=Date.now()-start;
+        if(el>700 && ss && !ss.speaking && !ss.pending) resume();
+        else if(el>30000) resume();
+      },250);
+    }
+    // Wait for the mic to be released (voiceRef cleared by onend), then add a small
+    // settle buffer before speaking. Fall back after 1500ms if onend never fires.
+    const t0=Date.now();
+    speakWaitRef.current=setInterval(()=>{
+      if(!voiceRef.current || Date.now()-t0>1500){
+        clearInterval(speakWaitRef.current);
+        setTimeout(beginSpeech,300); // settle buffer after mic release
+      }
+    },60);
   }
   const voiceShouldRunRef=useRef(false);
   const speakingRef=useRef(false);      // true while a step is being read aloud
   const speakPollRef=useRef(null);      // interval that detects when speech truly ends
+  const speakWaitRef=useRef(null);      // interval that waits for the mic to release before speaking
   const voiceSpawningRef=useRef(false); // prevents concurrent instances
   const armedRef=useRef(false);         // true after wake phrase, awaiting a command
   const armTimerRef=useRef(null);
@@ -659,13 +674,14 @@ function CookMode({recipe,onClose}){
     voiceSpawningRef.current=false;
     speakingRef.current=false;
     clearInterval(speakPollRef.current);
+    clearInterval(speakWaitRef.current);
     disarm();
     try{voiceRef.current?.abort();}catch{}
     voiceRef.current=null;
     try{window.speechSynthesis?.cancel();}catch{}
     setVoiceActive(false);setVoiceHint("");
   }
-  useEffect(()=>()=>{voiceShouldRunRef.current=false;clearTimeout(armTimerRef.current);clearInterval(speakPollRef.current);try{voiceRef.current?.abort();}catch{};window.speechSynthesis?.cancel();},[]);
+  useEffect(()=>()=>{voiceShouldRunRef.current=false;clearTimeout(armTimerRef.current);clearInterval(speakPollRef.current);clearInterval(speakWaitRef.current);try{voiceRef.current?.abort();}catch{};window.speechSynthesis?.cancel();},[]);
   // Watchdog: if listening should be on but no instance is alive, restart it.
   // Guarantees voice never silently dies after a command.
   useEffect(()=>{

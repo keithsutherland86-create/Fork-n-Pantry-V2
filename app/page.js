@@ -1993,7 +1993,7 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
           <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4,paddingBottom:6,borderBottom:"1.5px solid var(--parchment)"}}>About</div>
           <div style={row}>
             <div style={label}>App Version</div>
-            <span style={{fontSize:13,color:"var(--mist)"}}>Fork n Pantry v1.0</span>
+            <span style={{fontSize:13,color:"var(--mist)"}}>Fork n Pantry v2.11</span>
           </div>
           <div style={{marginTop:14,padding:"14px 16px",background:"var(--sage-pale)",borderRadius:"var(--r-md)",border:"1px solid var(--sage-lt)"}}>
             <div className="serif" style={{fontWeight:600,fontSize:16,color:"var(--forest)",marginBottom:6}}>Fork n Pantry</div>

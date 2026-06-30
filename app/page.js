@@ -402,6 +402,7 @@ function EditModal({recipe,onSave,onClose}){
     ogImage:recipe.ogImage||"",
   });
 
+  // [PRO] AI Refresh — deep re-parse with Sonnet for incomplete recipes
   async function handleAiRefresh(){
     const url=form.url||recipe.url;
     if(!url)return;
@@ -1084,6 +1085,7 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
   function addToBook(bookId,recipeId){const u=books.map(c=>c.id===bookId?{...c,recipeIds:[...new Set([...(c.recipeIds||[]),recipeId])]}:c);setBooks(u);save(KEYS.c,u);setAddingTo(null);}
   function removeFromBook(bookId,recipeId){const u=books.map(c=>c.id===bookId?{...c,recipeIds:(c.recipeIds||[]).filter(id=>id!==recipeId)}:c);setBooks(u);save(KEYS.c,u);}
 
+  // [PRO] Share cookbook — publish to Supabase and generate invite link
   async function shareBook(book){
     if(!session){alert("Sign in to share cookbooks.");return;}
     setPublishing(true);
@@ -2201,7 +2203,7 @@ async function storeImagePermanently(url,recipeId,userId){
   }catch{return url;}
 }
 
-// ─── Shared cookbook cloud helpers ────────────────────────────────────────────
+// ─── Shared cookbook cloud helpers ──────────────────────────────────────────── [PRO] Shared Cookbooks
 async function sbPublishBook(book, session) {
   const sb = getSupabase(); if (!sb) return null;
   const { data, error } = await sb.from("shared_cookbooks").upsert({

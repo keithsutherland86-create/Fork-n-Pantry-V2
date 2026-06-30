@@ -5,12 +5,14 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.14";
+const APP_VERSION = "2.15";
+// Mark an entry `major:true` for a significant release — only those auto-pop the What's New
+// screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
-  { v:"2.14", title:"What's New screen", items:[
-    "Added this What's New screen — find it any time under Settings → What's New",
+  { v:"2.15", title:"What's New screen", items:[
+    "Added this What's New screen — it pops up once after a big update, and you can reopen it any time under Settings → What's New",
   ]},
-  { v:"2.13", title:"Collaboration & polish", items:[
+  { v:"2.13", title:"Collaboration & polish", major:true, items:[
     "Shared cookbooks now show recipes added by collaborators, live — and your additions sync to them too",
     "See who's joined a cookbook you own, with an invite button right in the cookbook",
     "Tap a time in any recipe step or Cook Mode (e.g. \"15 minutes\") to start a timer instantly",
@@ -21,6 +23,8 @@ const CHANGELOG = [
     "Images load more reliably, and AI Refresh reports clearly what it improved",
   ]},
 ];
+// Most recent significant release — the only one that auto-pops What's New on open
+const LATEST_NOTABLE = (CHANGELOG.find(c=>c.major)||CHANGELOG[0]).v;
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
 const KEYS = { r:"fnp_r4", c:"fnp_c3", p:"fnp_p3", g:"fnp_g1", t:"fnp_theme" };
@@ -2379,6 +2383,7 @@ function WhatsNewModal({onClose}){
               </div>
             </div>
           ))}
+          <button onClick={onClose} className="btn-primary" style={{width:"100%",padding:"13px 0",fontSize:14,borderRadius:"var(--r-md)",marginTop:4}}>Got it 👍</button>
         </div>
       </div>
     </div>
@@ -2579,11 +2584,11 @@ function AppInner(){
     // Show welcome screen on first ever open
     const seen=localStorage.getItem("fnp_welcomed");
     if(!seen)setWelcomed(false);
-    // Auto-show What's New once after an app update (not on first-ever open)
+    // Auto-show What's New once per significant release. Skips first-ever install (welcome covers that),
+    // and stays dismissed until a newer release is flagged `major` in CHANGELOG.
     try{
-      const lastVer=localStorage.getItem("fnp_last_version");
-      if(seen&&lastVer&&lastVer!==APP_VERSION)setShowWhatsNew(true);
-      localStorage.setItem("fnp_last_version",APP_VERSION);
+      const ack=localStorage.getItem("fnp_whatsnew_seen");
+      if(seen&&ack!==LATEST_NOTABLE)setShowWhatsNew(true);
     }catch{}
     history.pushState({page:"app"},"");
 
@@ -2716,6 +2721,8 @@ function AppInner(){
 
   function dismissWelcome(){
     localStorage.setItem("fnp_welcomed","1");
+    // New users start fresh — don't show them old release notes
+    try{localStorage.setItem("fnp_whatsnew_seen",LATEST_NOTABLE);}catch{}
     setWelcomed(true);
   }
 
@@ -2751,7 +2758,7 @@ function AppInner(){
       {!welcomed&&<WelcomeScreen onSignIn={handleSignIn} onContinue={()=>{dismissWelcome();}}/>}
       <Header count={recipes.length} onHelp={()=>setShowHelp(true)} session={session} onAccountPress={()=>setTab("settings")}/>
       {showHelp&&<HelpModal onClose={()=>setShowHelp(false)}/>}
-      {showWhatsNew&&<WhatsNewModal onClose={()=>setShowWhatsNew(false)}/>}
+      {showWhatsNew&&<WhatsNewModal onClose={()=>{try{localStorage.setItem("fnp_whatsnew_seen",LATEST_NOTABLE);}catch{}setShowWhatsNew(false);}}/>}
       <RecipeModal recipe={globalModalRecipe} onClose={()=>setGlobalModalRecipe(null)} onUpdate={r=>{updateRecipe(r);setGlobalModalRecipe(r);}}/>
       {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")} onImportFail={()=>showToast("error",null,"Import failed — couldn't read that recipe")} onRefresh={session?async()=>{setSyncStatus("syncing");const cloud=await cloudLoad(session.user.id);if(cloud){setRecipes(cloud);save(KEYS.r,cloud);setSyncStatus("synced");}else setSyncStatus("idle");}:null}/>}
       {tab==="categories"&&<CookbooksTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe} onAdd={addRecipe} session={session} sharedBooks={sharedBooks} onRefreshShared={()=>sbLoadMySharedBooks(session).then(setSharedBooks)}/>}

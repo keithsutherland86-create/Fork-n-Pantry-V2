@@ -251,10 +251,20 @@ Dig deeper into the content below. Infer and reconstruct ingredients and steps f
     console.error("Claude API error:", JSON.stringify(data));
     return Response.json({ ok:false, error: data.error?.message || "API error" }, { status:500 });
   }
-  const text = data.content?.find(b=>b.type==="text")?.text || "{}";
+  const text = data.content?.find(b=>b.type==="text")?.text || "";
+  // No text came back (e.g. only a non-text block, or hit max_tokens before any output)
+  if(!text.trim()){
+    console.error("Claude returned no text. stop_reason:", data.stop_reason, "content:", JSON.stringify(data.content));
+    return Response.json({ ok:false, error:`No recipe text returned (${data.stop_reason||"empty"})` }, { status:422 });
+  }
 
   try {
     const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
+    // Guard against a successful-but-empty result becoming a blank "Untitled" card
+    const hasContent = parsed && (parsed.title || (parsed.ingredients||[]).length || (parsed.steps||[]).length);
+    if(!hasContent){
+      return Response.json({ ok:false, error:"Couldn't extract a recipe from that — try a different link or manual entry." }, { status:422 });
+    }
 
     let finalImage = ogImage;
 

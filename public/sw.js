@@ -1,4 +1,4 @@
-const SHELL_CACHE = "fnp-shell-v2.17";
+const SHELL_CACHE = "fnp-shell-v2.22";
 const IMG_CACHE   = "fnp-images-v1";
 const SHELL_URLS  = ["/", "/manifest.json", "/icons/icon-512.png", "/icons/icon-192.png"];
 
@@ -11,7 +11,7 @@ self.addEventListener("install", e => {
   );
 });
 
-// Activate: delete old caches
+// Activate: delete ALL old caches (purges any stale bundle cached by older SW versions)
 self.addEventListener("activate", e => {
   e.waitUntil(
     caches.keys().then(keys =>
@@ -26,12 +26,17 @@ self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
   const url = new URL(e.request.url);
 
-  // Never intercept Supabase, Anthropic, or non-same-origin API calls
-  if (!url.origin.includes(self.location.origin) && !url.pathname.startsWith("/api/")) return;
-  if (url.hostname.includes("supabase.co") || url.hostname.includes("anthropic.com")) return;
+  // Only handle our own origin; let everything cross-origin go straight to network
+  if (url.origin !== self.location.origin) return;
+  // Never touch API calls (parse/AI) or Next.js data/RSC requests — these MUST be live,
+  // and caching RSC payloads is what breaks the app after a new deploy.
+  if (url.pathname.startsWith("/api/")) return;
+  if (url.pathname.startsWith("/_next/data/")) return;
+  if (url.searchParams.has("_rsc")) return;
+  if (e.request.headers.get("RSC") === "1" || e.request.headers.get("Next-Router-Prefetch")) return;
 
-  // Images: cache-first (they're big and stable once uploaded)
-  if (url.pathname.startsWith("/api/img") || url.pathname.match(/\.(png|jpg|jpeg|webp|gif|ico)$/)) {
+  // Images & icons: cache-first (big, stable once uploaded — gives offline image loading)
+  if (url.pathname.match(/\.(png|jpg|jpeg|webp|gif|ico|svg)$/)) {
     e.respondWith(
       caches.open(IMG_CACHE).then(cache =>
         cache.match(e.request).then(hit => {
@@ -46,10 +51,7 @@ self.addEventListener("fetch", e => {
     return;
   }
 
-  // API parse / other API: network-only (never cache AI responses)
-  if (url.pathname.startsWith("/api/")) return;
-
-  // App shell + Next.js assets: network-first, fall back to cache
+  // App shell + static JS/CSS: network-first (always fresh when online), cache fallback offline
   e.respondWith(
     fetch(e.request)
       .then(res => {

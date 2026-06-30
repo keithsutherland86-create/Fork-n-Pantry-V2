@@ -5,7 +5,7 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.21";
+const APP_VERSION = "2.22";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
@@ -1050,12 +1050,17 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       const body={input:text,imageBase64,imageMediaType};
       const res=await fetch("/api/parse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       const data=await res.json();
-      if(!data.ok)throw new Error();
+      if(!data.ok)throw new Error(data.error||"Couldn't parse — try manual entry.");
+      const r=data.recipe||{};
+      // Never save an empty shell — guard against blank "Untitled" cards
+      if(!r.title&&!(r.ingredients||[]).length&&!(r.steps||[]).length){
+        throw new Error("Couldn't extract a recipe — try a different link or manual entry.");
+      }
       // If image was uploaded, use it as the recipe image
       const ogImage = data.ogImage || (imageBase64 ? `data:${imageMediaType};base64,${imageBase64}` : "");
-      onAdd({id:Date.now().toString(),...data.recipe,ogImage,url:text.startsWith("http")?text:"",savedAt:Date.now()});
+      onAdd({id:Date.now().toString(),...r,ogImage,url:text.startsWith("http")?text:"",savedAt:Date.now()});
       onClose();
-    }catch{setError("Couldn't parse — try manual entry.");if(onFail)onFail();}
+    }catch(e){setError(e.message||"Couldn't parse — try manual entry.");if(onFail)onFail();}
     finally{setLoading(false);}
   }
 

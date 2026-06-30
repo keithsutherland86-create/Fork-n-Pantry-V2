@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.29";
+const APP_VERSION = "2.30";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.30", title:"Back button fixed when deep in Cook Mode", items:[
+    "Pressing back in Cook Mode now reliably returns to the recipe, then to the recipe list",
+  ]},
   { v:"2.29", title:"Voice reliability & audio feedback", items:[
     "Audible chime when voice mode activates; soft tone confirms each command",
     "Wake phrase detection tightened — common words like 'for' no longer trigger it accidentally",
@@ -936,8 +939,10 @@ function RecipeModal({recipe,onClose,onUpdate}){
     if(recipe){setServings(recipe.servings||4);setEditing(false);setCookMode(false);setCheckedIngs(new Set());setTimer(null);setMyNotes(recipe.myNotes||"");setNotesEditing(false);setRatingPending(false);}
   },[recipe?.id]);
 
-  // Back button closes this modal (CookMode/EditModal register on top when open)
-  useBackHandler(!!recipe && !cookMode && !editing, onClose);
+  // Always registered — Cook Mode and Edit sit on top (LIFO), so they fire first.
+  // Do NOT deactivate here when cookMode/editing; that causes a de-register/re-register
+  // race where React's effect scheduling leaves the stack empty between presses.
+  useBackHandler(!!recipe, onClose);
 
   useEffect(()=>{
     if(timer?.running){

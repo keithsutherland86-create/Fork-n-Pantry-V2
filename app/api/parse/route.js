@@ -1,3 +1,93 @@
+// Pull og:image, og:title and a clean recipe text summary (from JSON-LD if present) out of a page's HTML
+function extractFromHtml(html, fallbackTitle = "") {
+  let ogImage = "", ogTitle = fallbackTitle, pageText = "", hasRecipeLd = false;
+
+  const imgPatterns = [
+    /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
+    /<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i,
+    /"thumbnailUrl"\s*:\s*"([^"]+)"/i,
+    /"image"\s*:\s*"(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i,
+  ];
+  for (const p of imgPatterns) {
+    const m = html.match(p);
+    if (m?.[1]?.startsWith("http")) { ogImage = m[1].replace(/&amp;/g,"&").replace(/&#38;/g,"&"); break; }
+  }
+  const t = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+  if (t) ogTitle = t[1];
+
+  // Extract JSON-LD structured recipe data (most recipe sites include this)
+  const ldMatches = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  for (const match of ldMatches) {
+    try {
+      const json = JSON.parse(match[1].trim());
+      const items = Array.isArray(json) ? json : (json["@graph"] || [json]);
+      const recipe = items.find(i => (i["@type"] === "Recipe" || (Array.isArray(i["@type"]) && i["@type"].includes("Recipe"))));
+      if (recipe) {
+        hasRecipeLd = true;
+        if (!ogImage) {
+          const img = recipe.image;
+          let imgUrl = typeof img === "string" ? img : Array.isArray(img) ? (typeof img[0] === "string" ? img[0] : img[0]?.url || img[0]?.contentUrl) : img?.url || img?.contentUrl;
+          if (imgUrl) imgUrl = imgUrl.replace(/&amp;/g,"&").replace(/&#38;/g,"&");
+          if (imgUrl?.startsWith("http")) ogImage = imgUrl;
+        }
+        const ingList = (recipe.recipeIngredient || []).join("\n");
+        const stepList = (recipe.recipeInstructions || []).map((s,i) => `${i+1}. ${typeof s === "string" ? s : s.text || ""}`).join("\n");
+        pageText = `Title: ${recipe.name || ogTitle}
+Description: ${recipe.description || ""}
+Yield: ${recipe.recipeYield || ""}
+Prep time: ${recipe.prepTime || ""}
+Cook time: ${recipe.cookTime || ""}
+Total time: ${recipe.totalTime || ""}
+Category: ${recipe.recipeCategory || ""}
+Cuisine: ${recipe.recipeCuisine || ""}
+
+INGREDIENTS:
+${ingList}
+
+INSTRUCTIONS:
+${stepList}
+
+Nutrition per serving: calories ${recipe.nutrition?.calories || ""}, protein ${recipe.nutrition?.proteinContent || ""}, carbs ${recipe.nutrition?.carbohydrateContent || ""}, fat ${recipe.nutrition?.fatContent || ""}`.trim();
+        break;
+      }
+    } catch {}
+  }
+
+  if (!pageText) {
+    pageText = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi,"").replace(/<script[^>]*>[\s\S]*?<\/script>/gi,"").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim().slice(0,5000);
+  }
+  return { ogImage, ogTitle, pageText, hasRecipeLd };
+}
+
+// Find the first external recipe-page link in a caption/description (skips the social platforms and link aggregators)
+function findRecipeLinkInText(text) {
+  if (!text) return "";
+  const urls = text.match(/https?:\/\/[^\s)"'<>]+/gi) || [];
+  const skip = /(instagram\.com|tiktok\.com|youtube\.com|youtu\.be|facebook\.com|fb\.watch|twitter\.com|x\.com|threads\.net|pinterest\.|cdninstagram|fbcdn|amzn\.|amazon\.)/i;
+  for (const u of urls) {
+    const clean = u.replace(/[.,);]+$/,"");
+    if (!skip.test(clean)) return clean;
+  }
+  return "";
+}
+
+async function fetchHtml(url, timeout = 7000) {
+  const agents = [
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1",
+    "Mozilla/5.0 (compatible; Googlebot/2.1)",
+    "facebookexternalhit/1.1",
+  ];
+  for (const ua of agents) {
+    try {
+      const r = await fetch(url, { headers: { "User-Agent": ua, "Accept": "text/html,*/*" }, redirect: "follow", signal: AbortSignal.timeout(timeout) });
+      if (r.ok) return await r.text();
+    } catch {}
+  }
+  return "";
+}
+
 export async function POST(req) {
   const body = await req.json();
   const { input = "", imageBase64 = "", imageMediaType = "image/jpeg", mode = "", existing = null } = body;
@@ -26,7 +116,7 @@ export async function POST(req) {
   }
 
   const isUrl = input.trim().startsWith("http");
-  let pageText = "", ogImage = "", ogTitle = "";
+  let pageText = "", ogImage = "", ogTitle = "", caption = "";
 
   // ── oEmbed for Instagram / TikTok — gets caption text without auth ────────────
   if (isUrl) {
@@ -41,7 +131,7 @@ export async function POST(req) {
         if (oRes.ok) {
           const oData = await oRes.json();
           // caption / title is typically in oData.title — strip leading username
-          const caption = (oData.title || "").replace(/^@[\w.]+:\s*/,"");
+          caption = (oData.title || "").replace(/^@[\w.]+:\s*/,"");
           if (caption) pageText = caption;
           if (oData.thumbnail_url) ogImage = oData.thumbnail_url;
           ogTitle = oData.title || "";
@@ -52,77 +142,31 @@ export async function POST(req) {
 
   if (isUrl) {
     // ── Step 1: Direct fetch for page content (needed for Claude to parse the recipe) ──
-    const agents = [
-      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1",
-      "Mozilla/5.0 (compatible; Googlebot/2.1)",
-      "facebookexternalhit/1.1",
-    ];
-    let html = "";
-    for (const ua of agents) {
-      try {
-        const r = await fetch(input, { headers: { "User-Agent": ua, "Accept": "text/html,*/*" }, signal: AbortSignal.timeout(6000) });
-        if (r.ok) { html = await r.text(); break; }
-      } catch {}
-    }
+    const html = await fetchHtml(input, 6000);
     if (html) {
-      // Extract og:image
-      const imgPatterns = [
-        /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
-        /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
-        /<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']/i,
-        /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i,
-        /"thumbnailUrl"\s*:\s*"([^"]+)"/i,
-        /"image"\s*:\s*"(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i,
-      ];
-      for (const p of imgPatterns) {
-        const m = html.match(p);
-        if (m?.[1]?.startsWith("http")) { ogImage = m[1]; break; }
-      }
-      const t = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
-      if (t) ogTitle = t[1];
+      const ex = extractFromHtml(html, ogTitle);
+      if (ex.ogImage) ogImage = ex.ogImage;
+      if (ex.ogTitle) ogTitle = ex.ogTitle;
+      if (ex.pageText) pageText = ex.pageText;
+      // If the page itself is a social caption, capture it so we can hunt for a recipe link
+      if (!caption && ex.pageText) caption = ex.pageText;
+    }
 
-      // Extract JSON-LD structured recipe data (most recipe sites include this)
-      const ldMatches = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
-      for (const match of ldMatches) {
-        try {
-          const json = JSON.parse(match[1].trim());
-          const items = Array.isArray(json) ? json : (json["@graph"] || [json]);
-          const recipe = items.find(i => (i["@type"] === "Recipe" || (Array.isArray(i["@type"]) && i["@type"].includes("Recipe"))));
-          if (recipe) {
-            // Extract image from JSON-LD if not found in meta tags
-            if (!ogImage) {
-              const img = recipe.image;
-              let imgUrl = typeof img === "string" ? img : Array.isArray(img) ? (typeof img[0] === "string" ? img[0] : img[0]?.url || img[0]?.contentUrl) : img?.url || img?.contentUrl;
-              if (imgUrl) imgUrl = imgUrl.replace(/&amp;/g,"&").replace(/&#38;/g,"&");
-              if (imgUrl?.startsWith("http")) ogImage = imgUrl;
-            }
-            // Build a clean text summary for Claude from the structured data
-            const ingList = (recipe.recipeIngredient || []).join("\n");
-            const stepList = (recipe.recipeInstructions || []).map((s,i) => `${i+1}. ${typeof s === "string" ? s : s.text || ""}`).join("\n");
-            pageText = `Title: ${recipe.name || ogTitle}
-Description: ${recipe.description || ""}
-Yield: ${recipe.recipeYield || ""}
-Prep time: ${recipe.prepTime || ""}
-Cook time: ${recipe.cookTime || ""}
-Total time: ${recipe.totalTime || ""}
-Category: ${recipe.recipeCategory || ""}
-Cuisine: ${recipe.recipeCuisine || ""}
-
-INGREDIENTS:
-${ingList}
-
-INSTRUCTIONS:
-${stepList}
-
-Nutrition per serving: calories ${recipe.nutrition?.calories || ""}, protein ${recipe.nutrition?.proteinContent || ""}, carbs ${recipe.nutrition?.carbohydrateContent || ""}, fat ${recipe.nutrition?.fatContent || ""}`.trim();
-            break;
+    // ── Step 1b: Follow a recipe link found in the video caption/description ──
+    // Videos often say "Full recipe 👉 https://myblog.com/..." — that page parses far better than the caption.
+    if (!/INGREDIENTS:/.test(pageText)) {
+      const link = findRecipeLinkInText(caption || pageText);
+      if (link) {
+        const linkHtml = await fetchHtml(link, 7000);
+        if (linkHtml) {
+          const lx = extractFromHtml(linkHtml, ogTitle);
+          // Only prefer the linked page if it actually yielded a structured recipe
+          if (lx.hasRecipeLd && lx.pageText) {
+            pageText = lx.pageText;
+            if (lx.ogImage) ogImage = lx.ogImage; // a blog's recipe photo is cleaner & more stable than a social CDN thumbnail
+            if (lx.ogTitle) ogTitle = lx.ogTitle;
           }
-        } catch {}
-      }
-
-      // Fallback to raw text if no JSON-LD found
-      if (!pageText) {
-        pageText = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi,"").replace(/<script[^>]*>[\s\S]*?<\/script>/gi,"").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim().slice(0,5000);
+        }
       }
     }
 

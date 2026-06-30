@@ -12,9 +12,6 @@ export async function GET(req) {
   let origin;
   try { origin = new URL(url).origin; } catch { return new Response("Bad URL", { status: 400 }); }
 
-  const controllers = [new AbortController(), new AbortController()];
-  const timeout = setTimeout(() => controllers.forEach(c => c.abort()), 6000);
-
   // Try twice: once with a browser UA, once with Googlebot (some CDNs block mobile UA)
   const attempts = [
     {
@@ -28,6 +25,9 @@ export async function GET(req) {
   ];
 
   for (let i = 0; i < attempts.length; i++) {
+    // Each attempt gets its own timeout so a slow first UA doesn't kill the fallback
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
     try {
       const res = await fetch(url, {
         headers: {
@@ -35,13 +35,13 @@ export async function GET(req) {
           "Accept": "image/webp,image/avif,image/jpeg,image/png,image/*,*/*;q=0.8",
           "Accept-Language": "en-US,en;q=0.9",
         },
-        signal: controllers[i].signal,
+        signal: controller.signal,
       });
 
-      if (!res.ok) continue;
+      if (!res.ok) { clearTimeout(timeout); continue; }
 
       const contentType = res.headers.get("content-type") || "image/jpeg";
-      if (!contentType.startsWith("image/")) continue;
+      if (!contentType.startsWith("image/")) { clearTimeout(timeout); continue; }
 
       const buffer = await res.arrayBuffer();
       clearTimeout(timeout);
@@ -54,9 +54,8 @@ export async function GET(req) {
           "Access-Control-Allow-Origin": "*",
         },
       });
-    } catch {}
+    } catch { clearTimeout(timeout); }
   }
 
-  clearTimeout(timeout);
   return new Response("Proxy error", { status: 502 });
 }

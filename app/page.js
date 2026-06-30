@@ -124,12 +124,20 @@ function RImg({recipe,style:st={},className=""}){
   const[loaded,setLoaded]=useState(false);
   const[retries,setRetries]=useState(0);
   const retryTimer=useRef(null);
-  const src=recipe?.ogImage?pImg(recipe.ogImage):null;
+  const imgRef=useRef(null);
+  const baseSrc=recipe?.ogImage?pImg(recipe.ogImage):null;
+  // Append a cache-buster on retry so the browser re-fetches instead of reusing a failed response
+  const src=baseSrc&&retries>0?`${baseSrc}${baseSrc.includes("?")?"&":"?"}_r=${retries}`:baseSrc;
   useEffect(()=>{setErr(false);setLoaded(false);setRetries(0);return()=>clearTimeout(retryTimer.current);},[recipe?.ogImage]);
+  // If the image was already in the browser cache, onLoad may never fire after mount — detect it directly
+  useEffect(()=>{
+    const im=imgRef.current;
+    if(im&&im.complete&&im.naturalWidth>0)setLoaded(true);
+  },[src]);
   function onError(){
-    if(retries<2){
-      // Silent retry after a short delay — proxy timeouts are often transient
-      retryTimer.current=setTimeout(()=>{setRetries(r=>r+1);setErr(false);},2500*(retries+1));
+    if(retries<3){
+      // Silent retry — proxy/CDN timeouts on a cold fetch are often transient
+      retryTimer.current=setTimeout(()=>{setRetries(r=>r+1);setErr(false);},800*(retries+1));
     } else {
       setErr(true);
     }
@@ -139,7 +147,7 @@ function RImg({recipe,style:st={},className=""}){
   if(src&&!err) return(
     <div style={{position:"relative",overflow:"hidden",...st}} className={className}>
       {!loaded&&<div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 30% 30%,${tb(recipe.tags?.[0])},var(--parchment))`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:emojiSize}}>{recipe.emoji||"🍽️"}</div>}
-      <img src={src} alt="" onError={onError} onLoad={()=>setLoaded(true)}
+      <img ref={imgRef} src={src} alt="" onError={onError} onLoad={()=>setLoaded(true)}
         style={{width:"100%",height:"100%",objectFit:"cover",transition:"opacity .4s",opacity:loaded?1:0,display:"block"}}/>
     </div>
   );

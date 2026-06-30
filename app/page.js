@@ -120,7 +120,8 @@ function RImg({recipe,style:st={},className=""}){
       setErr(true);
     }
   }
-  const emojiSize="clamp(18px, 40%, 44px)";
+  // vw-based so it scales with the actual card size on screen, not the parent font-size
+  const emojiSize="min(52px, 13vw)";
   if(src&&!err) return(
     <div style={{position:"relative",overflow:"hidden",...st}} className={className}>
       {!loaded&&<div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 30% 30%,${tb(recipe.tags?.[0])},var(--parchment))`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:emojiSize}}>{recipe.emoji||"🍽️"}</div>}
@@ -2139,6 +2140,22 @@ async function cloudUploadAll(recipes,userId){
   const rows=recipes.map(r=>({id:r.id,user_id:userId,data:r,updated_at:new Date().toISOString()}));
   await sb.from("recipes").upsert(rows,{onConflict:"id,user_id"});
 }
+async function storeImagePermanently(url,recipeId,userId){
+  // Upload to Supabase Storage so Instagram/TikTok CDN expiry never breaks the image
+  if(!url||url.startsWith("data:")||url.includes("supabase.co"))return url;
+  try{
+    const sb=getSupabase();if(!sb)return url;
+    const res=await fetch(`/api/img?url=${encodeURIComponent(url)}`);
+    if(!res.ok||!res.headers.get("content-type")?.startsWith("image/"))return url;
+    const blob=await res.blob();
+    const ext=blob.type.includes("png")?"png":blob.type.includes("webp")?"webp":"jpg";
+    const path=`${userId}/${recipeId}.${ext}`;
+    const{error}=await sb.storage.from("recipe-images").upload(path,blob,{contentType:blob.type,upsert:true});
+    if(error)return url;
+    const{data:{publicUrl}}=sb.storage.from("recipe-images").getPublicUrl(path);
+    return publicUrl;
+  }catch{return url;}
+}
 
 // ─── Shared cookbook cloud helpers ────────────────────────────────────────────
 async function sbPublishBook(book, session) {
@@ -2292,9 +2309,19 @@ function AppInner(){
   },[tab]);
 
   function addRecipe(r){
-    const u=[r,...recipes];setRecipes(u);save(KEYS.r,u);
+    // Save immediately so the UI responds instantly
+    setRecipes(prev=>{const u=[r,...prev.filter(x=>x.id!==r.id)];save(KEYS.r,u);return u;});
     if(session)cloudUpsert(r,session.user.id).then(()=>setSyncStatus("synced"));
     showToast("success",r,`"${r.title||"Recipe"}" saved`);
+    // Background: upload image to Supabase Storage so it never expires
+    if(session?.user?.id&&r.ogImage){
+      storeImagePermanently(r.ogImage,r.id,session.user.id).then(stored=>{
+        if(stored===r.ogImage)return;
+        const updated={...r,ogImage:stored};
+        setRecipes(prev=>{const u=prev.map(x=>x.id===r.id?updated:x);save(KEYS.r,u);return u;});
+        cloudUpsert(updated,session.user.id);
+      });
+    }
   }
   function deleteRecipe(id){
     const u=recipes.filter(r=>r.id!==id);setRecipes(u);save(KEYS.r,u);

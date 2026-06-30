@@ -386,30 +386,52 @@ function CookMode({recipe,onClose}){
     return()=>{try{wakeLockRef.current?.release();}catch{}};
   },[]);
 
-  // [PRO] Voice navigation in Cook Mode
-  function startVoice(){
+  // [PRO] Voice navigation in Cook Mode — stays active until manually stopped.
+  // Auto-restarts on silence/timeout (Web Speech API stops after ~7s of quiet on mobile).
+  // Wake phrase "hey fork" is optional — commands work with or without it.
+  const voiceShouldRunRef=useRef(false);
+  function spawnRecognition(){
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR){setVoiceHint("Voice not supported");return;}
+    if(!SR||!voiceShouldRunRef.current)return;
     const r=new SR();r.continuous=true;r.interimResults=false;r.lang="en-AU";
     r.onresult=e=>{
-      const t=e.results[e.results.length-1][0].transcript.toLowerCase().trim();
-      if(/\bnext\b/.test(t)){setStep(s=>Math.min(total-1,s+1));setVoiceHint("→ Next");}
-      else if(/\b(back|previous|prev)\b/.test(t)){setStep(s=>Math.max(0,s-1));setVoiceHint("← Back");}
-      else if(/\brepeat\b/.test(t)){setVoiceHint("↻ Repeat");setStep(s=>{const v=s;setTimeout(()=>setStep(v),50);return v;});}
+      const raw=e.results[e.results.length-1][0].transcript.toLowerCase().trim();
+      // Strip optional wake phrase "hey fork" / "a fork" / "hey four" (common mishears)
+      const t=raw.replace(/^(hey\s+fork|hey\s+four|a\s+fork)\s*/,"");
+      let acted=false;
+      if(/\bnext\b/.test(t)){setStep(s=>Math.min(total-1,s+1));setVoiceHint("→ Next step");acted=true;}
+      else if(/\b(back|previous|prev)\b/.test(t)){setStep(s=>Math.max(0,s-1));setVoiceHint("← Back");acted=true;}
+      else if(/\brepeat\b/.test(t)){setVoiceHint("↻ Repeating");acted=true;}
       else if(/\btimer\b/.test(t)){
         const m=steps[stepRef.current]?.match(TIME_RE);
-        if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");}
-        else setVoiceHint("No time found");
+        if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");acted=true;}
+        else setVoiceHint("No timer in this step");
       }
-      else setVoiceHint(`"${t}"?`);
-      setTimeout(()=>setVoiceHint(""),2000);
+      if(acted)setTimeout(()=>setVoiceHint("🎙️ Listening…"),1800);
     };
-    r.onerror=()=>{setVoiceActive(false);setVoiceHint("");};
-    r.onend=()=>{setVoiceActive(false);setVoiceHint("");};
-    r.start();voiceRef.current=r;setVoiceActive(true);setVoiceHint("Listening…");
+    r.onerror=err=>{
+      // "no-speech" and "aborted" are normal — just restart; other errors surface briefly
+      if(err.error!=="no-speech"&&err.error!=="aborted")setVoiceHint("Mic error — retrying…");
+    };
+    // Auto-restart on end so it stays active across silence gaps
+    r.onend=()=>{if(voiceShouldRunRef.current)setTimeout(spawnRecognition,300);};
+    try{r.start();}catch{}
+    voiceRef.current=r;
   }
-  function stopVoice(){voiceRef.current?.stop();setVoiceActive(false);setVoiceHint("");}
-  useEffect(()=>()=>{voiceRef.current?.stop();},[]);
+  function startVoice(){
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){setVoiceHint("Voice not supported in this browser");return;}
+    voiceShouldRunRef.current=true;
+    setVoiceActive(true);
+    setVoiceHint("🎙️ Listening… say 'Hey Fork, next'");
+    spawnRecognition();
+  }
+  function stopVoice(){
+    voiceShouldRunRef.current=false;
+    try{voiceRef.current?.stop();}catch{}
+    setVoiceActive(false);setVoiceHint("");
+  }
+  useEffect(()=>()=>{voiceShouldRunRef.current=false;try{voiceRef.current?.stop();}catch{};},[]);
   useEffect(()=>{
     if(timer?.running){
       timerRef.current=setInterval(()=>setTimer(t=>{
@@ -503,7 +525,7 @@ function CookMode({recipe,onClose}){
           :<button onClick={onClose} style={{flex:2,padding:"15px 0",borderRadius:"var(--r-md)",border:"none",background:"linear-gradient(160deg,#7AB89A,#4A9A72)",color:"#0A1A10",fontSize:15,fontWeight:800,cursor:"pointer",boxShadow:"0 4px 20px rgba(74,222,128,.25)",fontFamily:"var(--font-ui)"}}>Done! 🎉</button>
         }
         <button onClick={voiceActive?stopVoice:startVoice}
-          title={voiceActive?"Stop voice navigation":"Voice navigation: say 'next', 'back', 'repeat', 'timer'"}
+          title={voiceActive?"Tap to stop voice — say 'Hey Fork, next / back / repeat / timer'":"Tap to enable hands-free voice — stays on until you tap again"}
           style={{width:54,padding:"15px 0",borderRadius:"var(--r-md)",border:`1.5px solid ${voiceActive?"rgba(122,184,154,.6)":"rgba(255,255,255,.25)"}`,background:voiceActive?"rgba(122,184,154,.2)":"rgba(255,255,255,.08)",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",animation:voiceActive?"pulse 2s infinite":"none",fontFamily:"var(--font-ui)"}}>🎙️</button>
       </div>
     </div>
@@ -2528,7 +2550,7 @@ const HELP_SECTIONS=[
   {icon:"📋",title:"Adding Recipes",body:"Tap + Add Recipe on the Recipes tab. Paste a URL from any recipe website and AI will extract everything automatically. You can also take a photo of a cookbook page, paste copied text, or enter a recipe manually."},
   {icon:"🔍",title:"Searching & Filtering",body:"Use the search bar to find recipes by name, tag, or source. Filter by tag using the pills below the search bar. Toggle ❤️ Favourites to see only your saved favourites. Use A–Z or Calories sort to reorder."},
   {icon:"🥗",title:"What Can I Make?",body:"Tap '🥗 What can I make?' on the Recipes tab. Type in ingredients you have on hand separated by commas — the app will score and rank your recipes by how many ingredients match."},
-  {icon:"👨‍🍳",title:"Cook Mode",body:"Open any recipe and scroll to the Method section. Tap 'Cook Mode' for a full-screen step-by-step guide with a large font. The screen stays on while you cook. Swipe back or tap × to exit."},
+  {icon:"👨‍🍳",title:"Cook Mode",body:"Open any recipe and scroll to the Method section. Tap 'Cook Mode' for a full-screen step-by-step guide with a large font. The screen stays on while you cook. Tap the 🎙️ button once to enable hands-free voice — say 'Hey Fork, next', 'Hey Fork, back', 'Hey Fork, repeat', or 'Hey Fork, timer' to control it without touching your phone. Tap 🎙️ again to stop. Tap × to exit cook mode."},
   {icon:"⏱",title:"Timers",body:"Inside a recipe, tap the prep time or cook time chip to start a countdown timer. The timer banner shows at the top of the recipe. Tap Pause/Resume as needed. The banner turns amber when under 30 seconds and red when done."},
   {icon:"🛒",title:"Grocery List",body:"Open any recipe and tap '+ All' under Ingredients to add everything to your list, or tick individual ingredients and tap '+ Grocery' to add just those. The Grocery tab shows your full list. Tap items to check them off. Share the list via the 📤 button."},
   {icon:"📅",title:"Meal Planner",body:"The Planner tab shows a weekly meal grid. Tap any slot to assign a recipe. Use the ‹ › arrows to navigate between weeks. Tap 'Grocery' to build a shopping list from all planned meals automatically."},

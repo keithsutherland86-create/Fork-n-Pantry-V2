@@ -389,6 +389,17 @@ function CookMode({recipe,onClose}){
   // [PRO] Voice navigation in Cook Mode — stays active until manually stopped.
   // Auto-restarts on silence/timeout (Web Speech API stops after ~7s of quiet on mobile).
   // Wake phrase "hey fork" is optional — commands work with or without it.
+  // Text-to-speech: read a step aloud, cancelling any in-progress speech first
+  function speak(text){
+    if(!window.speechSynthesis)return;
+    window.speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(text);
+    u.lang="en-AU";u.rate=0.92;u.pitch=1;
+    window.speechSynthesis.speak(u);
+  }
+  // Auto-read current step whenever voice is active and step changes
+  useEffect(()=>{if(voiceActive)speak(steps[step]);},[step,voiceActive]);// eslint-disable-line
+
   const voiceShouldRunRef=useRef(false);
   function spawnRecognition(){
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -399,13 +410,18 @@ function CookMode({recipe,onClose}){
       // Strip optional wake phrase "hey fork" / "a fork" / "hey four" (common mishears)
       const t=raw.replace(/^(hey\s+fork|hey\s+four|a\s+fork)\s*/,"");
       let acted=false;
-      if(/\bnext\b/.test(t)){setStep(s=>Math.min(total-1,s+1));setVoiceHint("→ Next step");acted=true;}
+      if(/\b(what'?s?\s+next|read\s+next)\b/.test(t)){
+        const nextIdx=Math.min(stepRef.current+1,total-1);
+        if(nextIdx>stepRef.current){speak(steps[nextIdx]);setVoiceHint(`→ Step ${nextIdx+1}`);acted=true;}
+        else{speak("That's the last step.");setVoiceHint("Last step");acted=true;}
+      }
+      else if(/\b(read\s+(this|step|again)|repeat)\b/.test(t)){speak(steps[stepRef.current]);setVoiceHint("↻ Reading step");acted=true;}
+      else if(/\bnext\b/.test(t)){setStep(s=>Math.min(total-1,s+1));setVoiceHint("→ Next step");acted=true;}
       else if(/\b(back|previous|prev)\b/.test(t)){setStep(s=>Math.max(0,s-1));setVoiceHint("← Back");acted=true;}
-      else if(/\brepeat\b/.test(t)){setVoiceHint("↻ Repeating");acted=true;}
       else if(/\btimer\b/.test(t)){
         const m=steps[stepRef.current]?.match(TIME_RE);
         if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");acted=true;}
-        else setVoiceHint("No timer in this step");
+        else{speak("No timer found in this step.");setVoiceHint("No timer in this step");}
       }
       if(acted)setTimeout(()=>setVoiceHint("🎙️ Listening…"),1800);
     };
@@ -431,7 +447,7 @@ function CookMode({recipe,onClose}){
     try{voiceRef.current?.stop();}catch{}
     setVoiceActive(false);setVoiceHint("");
   }
-  useEffect(()=>()=>{voiceShouldRunRef.current=false;try{voiceRef.current?.stop();}catch{};},[]);
+  useEffect(()=>()=>{voiceShouldRunRef.current=false;try{voiceRef.current?.stop();}catch{};window.speechSynthesis?.cancel();},[]);
   useEffect(()=>{
     if(timer?.running){
       timerRef.current=setInterval(()=>setTimer(t=>{
@@ -490,6 +506,10 @@ function CookMode({recipe,onClose}){
       {/* Step text */}
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 32px",textAlign:"center",position:"relative",zIndex:1}}>
         <div className="serif" style={{fontSize:28,fontWeight:600,color:"#FFFFFF",lineHeight:1.6,maxWidth:480,textShadow:"0 2px 16px rgba(0,0,0,.6)"}}>{renderStepWithTimers(steps[step],startTimer,{color:"#fff",borderColor:"rgba(122,184,154,.6)",background:"rgba(122,184,154,.15)"})}</div>
+        <button onClick={()=>speak(steps[step])} title="Read step aloud"
+          style={{marginTop:18,background:"rgba(255,255,255,.1)",border:"1px solid rgba(255,255,255,.2)",color:"rgba(255,255,255,.7)",borderRadius:20,padding:"6px 16px",fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+          🔊 Read aloud
+        </button>
       </div>
 
       {/* Ingredients drawer */}
@@ -2550,7 +2570,7 @@ const HELP_SECTIONS=[
   {icon:"📋",title:"Adding Recipes",body:"Tap + Add Recipe on the Recipes tab. Paste a URL from any recipe website and AI will extract everything automatically. You can also take a photo of a cookbook page, paste copied text, or enter a recipe manually."},
   {icon:"🔍",title:"Searching & Filtering",body:"Use the search bar to find recipes by name, tag, or source. Filter by tag using the pills below the search bar. Toggle ❤️ Favourites to see only your saved favourites. Use A–Z or Calories sort to reorder."},
   {icon:"🥗",title:"What Can I Make?",body:"Tap '🥗 What can I make?' on the Recipes tab. Type in ingredients you have on hand separated by commas — the app will score and rank your recipes by how many ingredients match."},
-  {icon:"👨‍🍳",title:"Cook Mode",body:"Open any recipe and scroll to the Method section. Tap 'Cook Mode' for a full-screen step-by-step guide with a large font. The screen stays on while you cook. Tap the 🎙️ button once to enable hands-free voice — say 'Hey Fork, next', 'Hey Fork, back', 'Hey Fork, repeat', or 'Hey Fork, timer' to control it without touching your phone. Tap 🎙️ again to stop. Tap × to exit cook mode."},
+  {icon:"👨‍🍳",title:"Cook Mode",body:"Open any recipe and scroll to the Method section. Tap 'Cook Mode' for a full-screen step-by-step guide. Tap 🔊 Read aloud to hear the current step spoken. Tap 🎙️ once to enable hands-free voice — it stays on until you tap again. Say 'Hey Fork, next', 'Hey Fork, back', 'Hey Fork, repeat', 'Hey Fork, what's next' (previews the next step without moving), or 'Hey Fork, timer'. When voice is on, each step is read aloud automatically as you move through them."},
   {icon:"⏱",title:"Timers",body:"Inside a recipe, tap the prep time or cook time chip to start a countdown timer. The timer banner shows at the top of the recipe. Tap Pause/Resume as needed. The banner turns amber when under 30 seconds and red when done."},
   {icon:"🛒",title:"Grocery List",body:"Open any recipe and tap '+ All' under Ingredients to add everything to your list, or tick individual ingredients and tap '+ Grocery' to add just those. The Grocery tab shows your full list. Tap items to check them off. Share the list via the 📤 button."},
   {icon:"📅",title:"Meal Planner",body:"The Planner tab shows a weekly meal grid. Tap any slot to assign a recipe. Use the ‹ › arrows to navigate between weeks. Tap 'Grocery' to build a shopping list from all planned meals automatically."},

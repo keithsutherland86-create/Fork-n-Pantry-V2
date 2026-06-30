@@ -1835,10 +1835,25 @@ function GroceryTab(){
 }
 
 // ─── SETTINGS TAB ─────────────────────────────────────────────────────────────
-function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport}){
+function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onFixImages}){
   const[dark,setDark]=useState(()=>{try{return localStorage.getItem(KEYS.t)==="dark";}catch{return false;}});
   const[signingIn,setSigningIn]=useState(false);
+  const[fixing,setFixing]=useState(false);
+  const[fixMsg,setFixMsg]=useState("");
   const importRef=useRef(null);
+
+  async function handleFixImages(){
+    if(!onFixImages||fixing)return;
+    setFixing(true);setFixMsg("Checking images…");
+    try{
+      const{fixed,failed,total}=await onFixImages((done,tot)=>setFixMsg(`Checking ${done}/${tot}…`));
+      const parts=[];
+      if(fixed)parts.push(`${fixed} restored`);
+      if(failed)parts.push(`${failed} couldn't be recovered`);
+      setFixMsg(parts.length?`✓ ${parts.join(", ")}`:"✓ All images already up to date");
+    }catch(e){setFixMsg("✗ "+(e.message||"Failed"));}
+    setFixing(false);
+  }
 
   function exportRecipes(){
     const blob=new Blob([JSON.stringify(recipes,null,2)],{type:"application/json"});
@@ -1959,6 +1974,18 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport}){
             </div>
             <button onClick={()=>importRef.current?.click()} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>⬆ Import</button>
           </div>
+          {session&&(
+            <div style={row}>
+              <div style={{flex:1}}>
+                <div style={label}>Fix Recipe Images</div>
+                <div style={sub}>Re-download and permanently store images for recipes whose photos have stopped loading</div>
+                {fixMsg&&<div style={{fontSize:12,marginTop:4,color:fixMsg.startsWith("✓")?"var(--moss)":fixMsg.startsWith("✗")?"#991B1B":"var(--mist)"}}>{fixMsg}</div>}
+              </div>
+              <button onClick={handleFixImages} disabled={fixing||!recipes.length} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:fixing?"wait":"pointer",color:"var(--moss)",opacity:(fixing||!recipes.length)?.6:1,flexShrink:0,whiteSpace:"nowrap"}}>
+                {fixing?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span> Fixing…</>:"🖼 Fix Images"}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* About */}
@@ -2538,6 +2565,38 @@ function AppInner(){
     if(session)cloudUpsert(r,session.user.id).then(()=>setSyncStatus("synced"));
   }
 
+  // Re-store images for already-saved recipes so expired CDN links get replaced with permanent Supabase copies.
+  // Returns {fixed, failed, total}. onProgress(done,total) is called as each recipe completes.
+  async function fixAllImages(onProgress){
+    if(!session?.user?.id)return{fixed:0,failed:0,total:0};
+    const uid=session.user.id;
+    let fixed=0,failed=0,done=0;
+    const total=recipes.length;
+    for(const r of recipes){
+      // Already permanent — nothing to do
+      if(r.ogImage&&r.ogImage.includes("supabase.co")){done++;onProgress&&onProgress(done,total);continue;}
+      let stored=r.ogImage?await storeImagePermanently(r.ogImage,r.id,uid):"";
+      // If the current URL was dead (still not on supabase) try re-parsing the source for a fresh image
+      if((!stored||!stored.includes("supabase.co"))&&r.url){
+        try{
+          const res=await fetch("/api/parse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({input:r.url})});
+          const data=await res.json();
+          if(data.ok&&data.ogImage)stored=await storeImagePermanently(data.ogImage,r.id,uid);
+        }catch{}
+      }
+      if(stored&&stored!==r.ogImage&&stored.includes("supabase.co")){
+        const updated={...r,ogImage:stored};
+        setRecipes(prev=>{const u=prev.map(x=>x.id===updated.id?updated:x);save(KEYS.r,u);return u;});
+        cloudUpsert(updated,uid);
+        fixed++;
+      } else if(r.ogImage&&!r.ogImage.includes("supabase.co")){
+        failed++;
+      }
+      done++;onProgress&&onProgress(done,total);
+    }
+    return{fixed,failed,total};
+  }
+
   function dismissWelcome(){
     localStorage.setItem("fnp_welcomed","1");
     setWelcomed(true);
@@ -2595,7 +2654,7 @@ function AppInner(){
       {tab==="planner"&&<PlannerTab recipes={recipes} planner={planner} setPlanner={setPlanner} onUpdate={updateRecipe}/>}
       {tab==="scan"&&<ScanTab recipes={recipes} onOpenRecipe={r=>setSelectedRecipeGlobal(r)}/>}
       {tab==="grocery"&&<GroceryTab/>}
-      {tab==="settings"&&<SettingsTab session={session} onSignIn={handleSignIn} onSignOut={handleSignOut} syncStatus={syncStatus} recipes={recipes} onImport={rs=>{const merged=[...rs.filter(r=>!recipes.find(x=>x.id===r.id)),...recipes];setRecipes(merged);save(KEYS.r,merged);}}/>}
+      {tab==="settings"&&<SettingsTab session={session} onSignIn={handleSignIn} onSignOut={handleSignOut} syncStatus={syncStatus} recipes={recipes} onImport={rs=>{const merged=[...rs.filter(r=>!recipes.find(x=>x.id===r.id)),...recipes];setRecipes(merged);save(KEYS.r,merged);}} onFixImages={fixAllImages}/>}
       <TabBar tab={tab} setTab={setTab}/>
       {backToast&&(
         <div style={{position:"fixed",bottom:90,left:"50%",transform:"translateX(-50%)",background:"rgba(15,24,17,.88)",color:"#fff",borderRadius:24,padding:"10px 20px",fontSize:13,fontWeight:600,zIndex:500,pointerEvents:"none",backdropFilter:"blur(8px)",whiteSpace:"nowrap",boxShadow:"0 4px 16px rgba(0,0,0,.3)"}}>

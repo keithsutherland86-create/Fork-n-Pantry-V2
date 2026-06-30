@@ -5,10 +5,15 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.28";
+const APP_VERSION = "2.29";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.29", title:"Voice reliability & audio feedback", items:[
+    "Audible chime when voice mode activates; soft tone confirms each command",
+    "Wake phrase detection tightened — common words like 'for' no longer trigger it accidentally",
+    "Voice recovers from stalls 3× faster (800ms watchdog instead of 2500ms)",
+  ]},
   { v:"2.28", title:"Voice restart fix", items:[
     "Voice listening restarts immediately after a command instead of waiting up to 10 seconds",
   ]},
@@ -444,7 +449,8 @@ function CookMode({recipe,onClose}){
   const hasCustomWake=!!_customWake;
   const WAKE_RE=hasCustomWake
     ? new RegExp(`\\b${_customWake.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}\\b`)
-    : /\b(?:hey|hi|ok|okay|a)?\s*(?:fork|four|folk|forks|ford|for)\b/;
+    // "for" alone is too common — require hey/ok prefix for homophones, allow "fork" bare
+    : /\b(?:(?:hey|hi|ok|okay)\s+(?:fork|four|folk|forks|ford|for\b)|fork)\b/;
   const wakeLabel=hasCustomWake ? `"${_customWake}"` : "Hey Fork";
   const IDLE_HINT=hasCustomWake ? `🎙️ Say ${wakeLabel} + a command` : "🎙️ Listening — say a command";
 
@@ -471,11 +477,23 @@ function CookMode({recipe,onClose}){
       if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");}
       else{speak("No timer found in this step.");setVoiceHint("No timer in this step");}
     }
-    // Visual confirmation that a command was heard
+    // Audio + visual confirmation that a command was heard
+    playTone(1047,0.09,0.14);
     setVoiceFlash(true);
     setTimeout(()=>setVoiceFlash(false),650);
     if(navigator.vibrate)try{navigator.vibrate(40);}catch{}
     setTimeout(()=>setVoiceHint(IDLE_HINT),1800);
+  }
+  function playTone(freq=880,dur=0.13,vol=0.18){
+    try{
+      const ctx=new(window.AudioContext||window.webkitAudioContext)();
+      const osc=ctx.createOscillator(),g=ctx.createGain();
+      osc.connect(g);g.connect(ctx.destination);
+      osc.frequency.value=freq;osc.type="sine";
+      g.gain.setValueAtTime(vol,ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+dur);
+      osc.start(ctx.currentTime);osc.stop(ctx.currentTime+dur);
+    }catch{}
   }
   function disarm(){armedRef.current=false;clearTimeout(armTimerRef.current);}
   function arm(){
@@ -530,9 +548,9 @@ function CookMode({recipe,onClose}){
       for(let i=e.resultIndex;i<e.results.length;i++){
         const raw=e.results[i]?.[0]?.transcript||"";
         if(handleVoiceResult(raw)){
-          // Abort immediately so onend fires now and listening restarts in ~200ms
-          // rather than waiting for the natural silence timeout (can be 5-10s on mobile).
-          try{r.abort();}catch{}
+          // Defer abort so we're outside the onresult callback — avoids edge cases
+          // where some mobile browsers don't fire onend when abort() is called inline.
+          setTimeout(()=>{try{r.abort();}catch{}},0);
           break;
         }
       }
@@ -552,6 +570,7 @@ function CookMode({recipe,onClose}){
   function startVoice(){
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     if(!SR){setVoiceHint("Voice not supported in this browser");return;}
+    playTone(880,0.13,0.18); // chime: listening activated
     voiceShouldRunRef.current=true;
     voiceSpawningRef.current=false;
     voiceRef.current=null;
@@ -575,7 +594,7 @@ function CookMode({recipe,onClose}){
     if(!voiceActive)return;
     const iv=setInterval(()=>{
       if(voiceShouldRunRef.current && !voiceRef.current && !voiceSpawningRef.current) spawnRecognition();
-    },2500);
+    },800);
     return()=>clearInterval(iv);
   },[voiceActive]);
   useEffect(()=>{

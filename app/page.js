@@ -1126,7 +1126,39 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
         <span className="serif" style={{fontWeight:600,fontSize:19,color:"var(--forest)",flex:1}}>{sharedBook.name}</span>
         <div style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:12,padding:"3px 9px",fontSize:10,fontWeight:700,color:"var(--moss)"}}>🌐 Shared</div>
       </div>
-      <div style={{padding:"0 16px 6px",fontSize:12,color:"var(--mist)"}}>{sharedRecipes.length} recipe{sharedRecipes.length!==1?"s":""} · by {sharedBook.owner_name}</div>
+      <div style={{padding:"0 16px 6px",fontSize:12,color:"var(--mist)"}}>{sharedRecipes.length} recipe{sharedRecipes.length!==1?"s":""}</div>
+      {/* Collaborators strip */}
+      {(()=>{
+        // Build contributor list from recipe authors + owner
+        const seen=new Map();
+        seen.set(sharedBook.owner_id,{name:sharedBook.owner_name,isOwner:true,recipeCount:0});
+        for(const row of sharedRecipes){
+          if(!seen.has(row.added_by))seen.set(row.added_by,{name:row.added_by_name,isOwner:false,recipeCount:0});
+          seen.get(row.added_by).recipeCount++;
+        }
+        const contributors=[...seen.values()];
+        // Members who joined but haven't added recipes yet
+        const totalMembers=(sharedBook.member_ids||[]).length+1;
+        const silent=Math.max(0,totalMembers-contributors.length);
+        function initials(name){return(name||"?").split(/\s+/).map(w=>w[0]?.toUpperCase()||"").slice(0,2).join("");}
+        function avatarColor(name){const colors=["#3A5E42","#5E2A5E","#2A5E8C","#8C5E2A","#2A5E5E","#5E2A2A","#4A6E1A","#8C3A1A"];let h=0;for(const c of(name||""))h=(h*31+c.charCodeAt(0))%colors.length;return colors[h];}
+        return(
+          <div style={{padding:"8px 16px 12px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            {contributors.map((c,i)=>(
+              <div key={i} title={`${c.name}${c.isOwner?" (owner)":""} · ${c.recipeCount} recipe${c.recipeCount!==1?"s":""}`}
+                style={{display:"flex",alignItems:"center",gap:6,background:"var(--cream)",border:"1px solid var(--parchment)",borderRadius:20,padding:"4px 10px 4px 4px"}}>
+                <div style={{width:26,height:26,borderRadius:"50%",background:avatarColor(c.name),display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0}}>
+                  {initials(c.name)}
+                </div>
+                <span style={{fontSize:12,fontWeight:600,color:"var(--forest)"}}>{c.name?.split(" ")[0]}</span>
+                {c.isOwner&&<span style={{fontSize:10}}>👑</span>}
+                {c.recipeCount>0&&<span style={{fontSize:10,color:"var(--mist)"}}>·{c.recipeCount}</span>}
+              </div>
+            ))}
+            {silent>0&&<div style={{fontSize:12,color:"var(--mist)",padding:"4px 8px"}}>+{silent} member{silent!==1?"s":""}</div>}
+          </div>
+        );
+      })()}
       <div style={{padding:"4px 16px"}}>
         {loadingShared&&<div style={{textAlign:"center",padding:"30px 0",color:"var(--mist)",fontSize:14}}>Loading…</div>}
         {sharedRecipes.map(row=>(

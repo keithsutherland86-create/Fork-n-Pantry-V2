@@ -5,7 +5,7 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.20";
+const APP_VERSION = "2.21";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
@@ -387,8 +387,9 @@ function CookMode({recipe,onClose}){
   },[]);
 
   // [PRO] Voice navigation in Cook Mode — stays active until manually stopped.
-  // Auto-restarts on silence/timeout (Web Speech API stops after ~7s of quiet on mobile).
-  // Wake phrase "hey fork" is optional — commands work with or without it.
+  // Recognition runs in short bursts (continuous=false) and auto-restarts, which is far
+  // more reliable on mobile than continuous=true. Saying "Hey Fork" arms it for ~8s; the
+  // command can be in the same breath ("Hey Fork next") or a follow-up utterance ("next").
   // Text-to-speech: read a step aloud, cancelling any in-progress speech first
   function speak(text){
     if(!window.speechSynthesis)return;
@@ -399,15 +400,13 @@ function CookMode({recipe,onClose}){
   }
   const voiceShouldRunRef=useRef(false);
   const voiceSpawningRef=useRef(false); // prevents concurrent instances
+  const armedRef=useRef(false);         // true after wake phrase, awaiting a command
+  const armTimerRef=useRef(null);
+  const WAKE_RE=/\b(?:hey|hi|ok|okay|a)?\s*(?:fork|four|folk|forks|ford|for)\b/;
+  const CMD_RE=/\b(next|back|previous|prev|repeat|read|stop|timer|what)\b/;
 
-  function handleVoiceResult(raw){
-    // Wake phrase REQUIRED every time — find "hey fork" (and common mishears) and act
-    // only on what follows it. Anything without the wake phrase is ignored entirely.
-    const lc=raw.toLowerCase().trim();
-    const wake=lc.match(/(?:hey|hi|ok|okay|a)\s*(?:fork|four|folk|forks|for)\b[\s,]*(.*)/);
-    if(!wake)return;
-    const t=wake[1].trim();
-    if(!t)return;
+  // Run a command from the part of the utterance that follows the wake phrase (or the whole thing)
+  function runCommand(t){
     let acted=false;
     if(/\b(what'?s?\s+next|read\s+next)\b/.test(t)){
       const nextIdx=Math.min(stepRef.current+1,total-1);
@@ -420,39 +419,76 @@ function CookMode({recipe,onClose}){
     else if(/\btimer\b/.test(t)){
       const m=steps[stepRef.current]?.match(TIME_RE);
       if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");acted=true;}
-      else{speak("No timer found in this step.");setVoiceHint("No timer in this step");}
+      else{speak("No timer found in this step.");setVoiceHint("No timer in this step");acted=true;}
     }
-    if(acted)setTimeout(()=>setVoiceHint("🎙️ Say 'Hey Fork…'"),1800);
+    return acted;
+  }
+  function disarm(){armedRef.current=false;clearTimeout(armTimerRef.current);}
+  function arm(){
+    armedRef.current=true;
+    setVoiceHint("👂 Yes? (say a command)");
+    clearTimeout(armTimerRef.current);
+    armTimerRef.current=setTimeout(()=>{armedRef.current=false;setVoiceHint("🎙️ Say 'Hey Fork…'");},8000);
+  }
+
+  function handleVoiceResult(raw){
+    const lc=(raw||"").toLowerCase().trim();
+    if(!lc)return;
+    const hasWake=WAKE_RE.test(lc);
+    if(hasWake){
+      // Take whatever follows the wake phrase; if a command is there, run it now
+      const after=lc.replace(WAKE_RE,"").trim();
+      if(after&&CMD_RE.test(after)){
+        const ok=runCommand(after);
+        disarm();
+        if(ok)setTimeout(()=>setVoiceHint("🎙️ Say 'Hey Fork…'"),1800);
+        else setVoiceHint("🎙️ Say 'Hey Fork…'");
+      } else {
+        // Wake phrase alone — arm and wait for the command in a follow-up utterance
+        arm();
+      }
+      return;
+    }
+    // No wake phrase: only act if we were armed by a recent wake phrase
+    if(armedRef.current&&CMD_RE.test(lc)){
+      const ok=runCommand(lc);
+      disarm();
+      if(ok)setTimeout(()=>setVoiceHint("🎙️ Say 'Hey Fork…'"),1800);
+    }
   }
 
   function spawnRecognition(){
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR||!voiceShouldRunRef.current||voiceSpawningRef.current)return;
+    if(!SR||!voiceShouldRunRef.current)return;
+    // One live instance at a time. The previous one has already ended (onend cleared
+    // these refs) by the time we restart — do NOT abort here, that caused a restart loop.
+    if(voiceSpawningRef.current||voiceRef.current)return;
     voiceSpawningRef.current=true;
-    // Always abort the previous instance before creating a new one
-    try{voiceRef.current?.abort();}catch{}
     const r=new SR();
     // continuous=false + auto-restart is far more reliable on mobile than continuous=true
     r.continuous=false;r.interimResults=false;r.lang="en-AU";
     r.onresult=e=>{
-      const raw=e.results[0]?.[0]?.transcript||"";
+      const raw=e.results[e.results.length-1]?.[0]?.transcript||"";
       handleVoiceResult(raw);
     };
     r.onerror=err=>{
       if(err.error!=="no-speech"&&err.error!=="aborted")setVoiceHint("Mic error — retrying…");
     };
     r.onend=()=>{
+      voiceRef.current=null;
       voiceSpawningRef.current=false;
       // Wait briefly then restart — gives the browser mic a moment to release
-      if(voiceShouldRunRef.current)setTimeout(spawnRecognition,250);
+      if(voiceShouldRunRef.current)setTimeout(spawnRecognition,300);
     };
-    try{r.start();voiceRef.current=r;}catch{voiceSpawningRef.current=false;}
+    try{r.start();voiceRef.current=r;voiceSpawningRef.current=false;}
+    catch{voiceRef.current=null;voiceSpawningRef.current=false;if(voiceShouldRunRef.current)setTimeout(spawnRecognition,500);}
   }
   function startVoice(){
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     if(!SR){setVoiceHint("Voice not supported in this browser");return;}
     voiceShouldRunRef.current=true;
     voiceSpawningRef.current=false;
+    voiceRef.current=null;
     setVoiceActive(true);
     setVoiceHint("🎙️ Say 'Hey Fork, next'");
     spawnRecognition();
@@ -460,10 +496,12 @@ function CookMode({recipe,onClose}){
   function stopVoice(){
     voiceShouldRunRef.current=false;
     voiceSpawningRef.current=false;
+    disarm();
     try{voiceRef.current?.abort();}catch{}
+    voiceRef.current=null;
     setVoiceActive(false);setVoiceHint("");
   }
-  useEffect(()=>()=>{voiceShouldRunRef.current=false;try{voiceRef.current?.stop();}catch{};window.speechSynthesis?.cancel();},[]);
+  useEffect(()=>()=>{voiceShouldRunRef.current=false;clearTimeout(armTimerRef.current);try{voiceRef.current?.abort();}catch{};window.speechSynthesis?.cancel();},[]);
   useEffect(()=>{
     if(timer?.running){
       timerRef.current=setInterval(()=>setTimer(t=>{
@@ -2586,7 +2624,7 @@ const HELP_SECTIONS=[
   {icon:"📋",title:"Adding Recipes",body:"Tap + Add Recipe on the Recipes tab. Paste a URL from any recipe website and AI will extract everything automatically. You can also take a photo of a cookbook page, paste copied text, or enter a recipe manually."},
   {icon:"🔍",title:"Searching & Filtering",body:"Use the search bar to find recipes by name, tag, or source. Filter by tag using the pills below the search bar. Toggle ❤️ Favourites to see only your saved favourites. Use A–Z or Calories sort to reorder."},
   {icon:"🥗",title:"What Can I Make?",body:"Tap '🥗 What can I make?' on the Recipes tab. Type in ingredients you have on hand separated by commas — the app will score and rank your recipes by how many ingredients match."},
-  {icon:"👨‍🍳",title:"Cook Mode",body:"Open any recipe and scroll to the Method section. Tap 'Cook Mode' for a full-screen step-by-step guide. Tap 🔊 Read aloud to hear the current step spoken. Tap 🎙️ once to enable hands-free voice — it stays on until you tap again. Start every command with 'Hey Fork' so it ignores normal kitchen chatter: 'Hey Fork, next', 'Hey Fork, back', 'Hey Fork, repeat', 'Hey Fork, read this', 'Hey Fork, what's next' (previews the next step without moving), or 'Hey Fork, timer'."},
+  {icon:"👨‍🍳",title:"Cook Mode",body:"Open any recipe and scroll to the Method section. Tap 'Cook Mode' for a full-screen step-by-step guide. Tap 🔊 Read aloud to hear the current step spoken. Tap 🎙️ once to enable hands-free voice — it stays on until you tap again. Say 'Hey Fork' to wake it (it ignores normal kitchen chatter otherwise), then a command — either in one breath ('Hey Fork, next') or as a follow-up after it answers ('Hey Fork' … 'next'). Commands: next, back, repeat, read this, what's next (previews without moving), and timer."},
   {icon:"⏱",title:"Timers",body:"Inside a recipe, tap the prep time or cook time chip to start a countdown timer. The timer banner shows at the top of the recipe. Tap Pause/Resume as needed. The banner turns amber when under 30 seconds and red when done."},
   {icon:"🛒",title:"Grocery List",body:"Open any recipe and tap '+ All' under Ingredients to add everything to your list, or tick individual ingredients and tap '+ Grocery' to add just those. The Grocery tab shows your full list. Tap items to check them off. Share the list via the 📤 button."},
   {icon:"📅",title:"Meal Planner",body:"The Planner tab shows a weekly meal grid. Tap any slot to assign a recipe. Use the ‹ › arrows to navigate between weeks. Tap 'Grocery' to build a shopping list from all planned meals automatically."},

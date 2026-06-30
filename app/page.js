@@ -461,13 +461,27 @@ function EditModal({recipe,onSave,onClose}){
       const r=data.recipe;
       const newIngCount=(r.ingredients||[]).length;
       const newStepCount=(r.steps||[]).length;
+      const newIngText=(r.ingredients||[]).map(ingToStr).join("\n");
+      const newStepText=(r.steps||[]).join("\n");
+      // Compute what actually changed up-front (not inside setForm, which can run twice)
       const improvements=[];
+      if(r.title&&!form.title)improvements.push("title");
+      if((r.description||"").length>(form.description||"").length+10)improvements.push("description");
+      if(newIngCount>oldIngCount)improvements.push(`ingredients ${oldIngCount}→${newIngCount}`);
+      else if(newIngCount===oldIngCount&&newIngText.trim()&&newIngText.trim()!==form.ingredientsText.trim())improvements.push("ingredient detail");
+      if(newStepCount>oldStepCount)improvements.push(`steps ${oldStepCount}→${newStepCount}`);
+      else if(newStepCount===oldStepCount&&newStepText.trim()&&newStepText.trim()!==form.stepsText.trim())improvements.push("step detail");
+      if(r.prepTime&&!form.prepTime)improvements.push("prep time");
+      if(r.cookTime&&!form.cookTime)improvements.push("cook time");
+      if(r.servings&&!form.servings)improvements.push("servings");
+      if((r.tags||[]).length&&!form.tags)improvements.push("tags");
+      if(data.ogImage&&!form.ogImage)improvements.push("photo");
       setForm(f=>{
         const next={...f};
         if(r.title&&!f.title)next.title=r.title;
         if((r.description||"").length>(f.description||"").length)next.description=r.description;
-        if(newIngCount>oldIngCount){next.ingredientsText=(r.ingredients||[]).map(ingToStr).join("\n");improvements.push(`ingredients: ${oldIngCount}→${newIngCount}`);}
-        if(newStepCount>oldStepCount){next.stepsText=(r.steps||[]).join("\n");improvements.push(`steps: ${oldStepCount}→${newStepCount}`);}
+        if(newIngCount>=oldIngCount&&newIngText.trim())next.ingredientsText=newIngText;
+        if(newStepCount>=oldStepCount&&newStepText.trim())next.stepsText=newStepText;
         if(r.prepTime&&!f.prepTime)next.prepTime=r.prepTime;
         if(r.cookTime&&!f.cookTime)next.cookTime=r.cookTime;
         if(r.servings&&!f.servings)next.servings=r.servings;
@@ -475,8 +489,8 @@ function EditModal({recipe,onSave,onClose}){
         if(data.ogImage&&!f.ogImage)next.ogImage=data.ogImage;
         return next;
       });
-      if(improvements.length)setRefreshMsg("✓ Improved: "+improvements.join(", "));
-      else setRefreshMsg("No new content found — this may be all that's available from the source.");
+      if(improvements.length)setRefreshMsg("✓ Updated: "+improvements.join(", "));
+      else setRefreshMsg("ℹ Recipe already looks complete — nothing more to add.");
     }catch(e){setRefreshMsg("✗ "+(e.message||"Refresh failed"));}
     setRefreshing(false);
   }
@@ -516,7 +530,7 @@ function EditModal({recipe,onSave,onClose}){
               style={{display:"flex",alignItems:"center",gap:6,background:"var(--sage-pale)",border:"1.5px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:refreshing?"wait":"pointer",color:"var(--moss)",opacity:refreshing?.7:1}}>
               {refreshing?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span> Searching deeper…</>:<>🔍 AI Refresh</>}
             </button>
-            {refreshMsg&&<span style={{fontSize:12,color:refreshMsg.startsWith("✓")?"var(--moss)":"#991B1B",flex:1}}>{refreshMsg}</span>}
+            {refreshMsg&&<span style={{fontSize:12,color:refreshMsg.startsWith("✓")?"var(--moss)":refreshMsg.startsWith("ℹ")?"var(--mist)":"#991B1B",flex:1}}>{refreshMsg}</span>}
           </div>
         )}
 

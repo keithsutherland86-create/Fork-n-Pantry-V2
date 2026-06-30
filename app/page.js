@@ -5,7 +5,7 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.23";
+const APP_VERSION = "2.24";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
@@ -1298,11 +1298,11 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared,o
         <div style={{flex:1,position:"relative"}}>
           <svg style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",opacity:.35,pointerEvents:"none"}} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search recipes…"
-            style={{background:"#fff",border:"1.5px solid rgba(0,0,0,0.08)",borderRadius:16,padding:"11px 14px 11px 36px",fontSize:14,outline:"none",color:"var(--ink)",width:"100%",boxShadow:"0 1px 4px rgba(0,0,0,0.06)",transition:"border-color .15s,box-shadow .15s"}}
+            style={{background:"var(--white)",border:"1.5px solid rgba(0,0,0,0.08)",borderRadius:16,padding:"11px 14px 11px 36px",fontSize:14,outline:"none",color:"var(--ink)",width:"100%",boxShadow:"0 1px 4px rgba(0,0,0,0.06)",transition:"border-color .15s,box-shadow .15s"}}
             onFocus={e=>{e.target.style.borderColor="var(--sage)";e.target.style.boxShadow="0 0 0 3px rgba(74,122,94,.12)";}}
             onBlur={e=>{e.target.style.borderColor="rgba(0,0,0,0.08)";e.target.style.boxShadow="0 1px 4px rgba(0,0,0,0.06)";}}/>
         </div>
-        <select value={sort} onChange={e=>setSort(e.target.value)} style={{background:"#fff",border:"1.5px solid rgba(0,0,0,0.08)",borderRadius:14,padding:"11px 10px",fontSize:13,outline:"none",color:"var(--ink)",cursor:"pointer",flexShrink:0,boxShadow:"0 1px 4px rgba(0,0,0,0.06)"}}>
+        <select value={sort} onChange={e=>setSort(e.target.value)} style={{background:"var(--white)",border:"1.5px solid rgba(0,0,0,0.08)",borderRadius:14,padding:"11px 10px",fontSize:13,outline:"none",color:"var(--ink)",cursor:"pointer",flexShrink:0,boxShadow:"0 1px 4px rgba(0,0,0,0.06)"}}>
           <option value="newest">Newest</option>
           <option value="az">A–Z</option>
           <option value="calories">Calories</option>
@@ -2332,7 +2332,7 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
               <div style={label}>Dark Mode</div>
               <div style={sub}>Easy on the eyes at night</div>
             </div>
-            <button onClick={toggleDark} style={{width:48,height:26,borderRadius:13,border:"none",cursor:"pointer",background:dark?"var(--moss)":"var(--mist)",position:"relative",transition:"background .2s",flexShrink:0}}>
+            <button onClick={toggleDark} style={{width:48,height:26,borderRadius:13,border:"none",cursor:"pointer",background:dark?"var(--moss)":"var(--sage-lt)",position:"relative",transition:"background .2s",flexShrink:0}}>
               <div style={{position:"absolute",top:3,left:dark?24:3,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,.2)"}}/>
             </button>
           </div>
@@ -2341,7 +2341,7 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
               <div style={label}>Keep Screen Awake in Cook Mode</div>
               <div style={sub}>Prevents phone screen sleep while cooking</div>
             </div>
-            <button onClick={toggleWakeLock} style={{width:48,height:26,borderRadius:13,border:"none",cursor:"pointer",background:wakeLock?"var(--moss)":"var(--mist)",position:"relative",transition:"background .2s",flexShrink:0}}>
+            <button onClick={toggleWakeLock} style={{width:48,height:26,borderRadius:13,border:"none",cursor:"pointer",background:wakeLock?"var(--moss)":"var(--sage-lt)",position:"relative",transition:"background .2s",flexShrink:0}}>
               <div style={{position:"absolute",top:3,left:wakeLock?24:3,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,.2)"}}/>
             </button>
           </div>

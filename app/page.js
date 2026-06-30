@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.30";
+const APP_VERSION = "2.31";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.31", title:"Wake phrase audio cue", items:[
+    "A rising two-tone chime plays when the wake phrase is heard — so you know to speak your command",
+  ]},
   { v:"2.30", title:"Back button & voice improvements", items:[
     "Pressing back in Cook Mode now reliably returns to the recipe, then to the recipe list",
     "'What's next' now advances to the next step AND reads it aloud",
@@ -502,6 +505,9 @@ function CookMode({recipe,onClose}){
   function disarm(){armedRef.current=false;clearTimeout(armTimerRef.current);}
   function arm(){
     armedRef.current=true;
+    // Two-tone rising chime: "I heard you, go ahead"
+    playTone(660,0.11,0.28);
+    setTimeout(()=>playTone(880,0.14,0.32),120);
     setVoiceHint("👂 Yes? (say a command)");
     clearTimeout(armTimerRef.current);
     armTimerRef.current=setTimeout(()=>{armedRef.current=false;setVoiceHint(IDLE_HINT);},8000);

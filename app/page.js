@@ -5,10 +5,14 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.25";
+const APP_VERSION = "2.26";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.26", title:"Voice feedback & custom wake word", items:[
+    "Cook Mode now shows animated listening bars and flashes green when it hears a command",
+    "Set your own wake phrase (e.g. \"hey chef\") in Settings → Appearance",
+  ]},
   { v:"2.25", title:"Hands-free cooking & polish", major:true, items:[
     "Cook Mode is now front-and-centre — a big 'Start Cook Mode' button on every recipe",
     "🔊 Read aloud reads the current step; hands-free voice is much more reliable now",
@@ -393,6 +397,7 @@ function CookMode({recipe,onClose}){
   const[timer,setTimer]=useState(null);
   const[voiceActive,setVoiceActive]=useState(false);
   const[voiceHint,setVoiceHint]=useState("");
+  const[voiceFlash,setVoiceFlash]=useState(false); // brief confirmation when a command lands
   useBackHandler(true, onClose);
   const timerRef=useRef(null);
   const voiceRef=useRef(null);
@@ -429,7 +434,17 @@ function CookMode({recipe,onClose}){
   const armTimerRef=useRef(null);
   const lastActRef=useRef({t:0,cmd:""}); // debounce: interim + final fire the same command
   const IDLE_HINT="🎙️ Listening — say a command";
-  const WAKE_RE=/\b(?:hey|hi|ok|okay|a)?\s*(?:fork|four|folk|forks|ford|for)\b/;
+  // Wake phrase: user can set a custom one in Settings; otherwise default "hey fork" + mishears.
+  const WAKE_RE=(()=>{
+    try{
+      const custom=(localStorage.getItem("fnp_wakephrase")||"").trim().toLowerCase();
+      if(custom){
+        const esc=custom.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+        return new RegExp(`\\b${esc}\\b`);
+      }
+    }catch{}
+    return /\b(?:hey|hi|ok|okay|a)?\s*(?:fork|four|folk|forks|ford|for)\b/;
+  })();
 
   // Map a phrase to a command key (or null). Order matters — most specific first.
   function classify(t){
@@ -454,6 +469,10 @@ function CookMode({recipe,onClose}){
       if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");}
       else{speak("No timer found in this step.");setVoiceHint("No timer in this step");}
     }
+    // Visual confirmation that a command was heard
+    setVoiceFlash(true);
+    setTimeout(()=>setVoiceFlash(false),650);
+    if(navigator.vibrate)try{navigator.vibrate(40);}catch{}
     setTimeout(()=>setVoiceHint(IDLE_HINT),1800);
   }
   function disarm(){armedRef.current=false;clearTimeout(armTimerRef.current);}
@@ -567,6 +586,11 @@ function CookMode({recipe,onClose}){
   return(
     <div style={{position:"fixed",inset:0,background:"#0A1A10",zIndex:700,display:"flex",flexDirection:"column",paddingTop:"env(safe-area-inset-top)",paddingBottom:"calc(24px + env(safe-area-inset-bottom)",overflow:"hidden"}}>
 
+      {/* Command-heard flash — green glow around the whole screen */}
+      {voiceFlash&&(
+        <div style={{position:"absolute",inset:0,zIndex:5,pointerEvents:"none",boxShadow:"inset 0 0 0 4px rgba(74,222,128,.9), inset 0 0 60px rgba(74,222,128,.45)",animation:"voiceFlash .65s ease-out"}}/>
+      )}
+
       {/* Background emojis — top and bottom bands, avoiding centre text */}
       {stepEmojis.length>0&&(
         <div style={{position:"absolute",inset:0,zIndex:0,pointerEvents:"none",userSelect:"none"}}>
@@ -635,8 +659,19 @@ function CookMode({recipe,onClose}){
         </div>
       )}
 
-      {/* Voice hint */}
-      {voiceHint&&<div style={{textAlign:"center",fontSize:13,color:"rgba(255,255,255,.7)",fontWeight:600,marginBottom:4,flexShrink:0,position:"relative",zIndex:1}}>{voiceHint}</div>}
+      {/* Listening indicator — animated bars while actively listening, with the live hint */}
+      {voiceActive&&(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:8,flexShrink:0,position:"relative",zIndex:1}}>
+          <div style={{display:"flex",alignItems:"center",gap:3,height:18}}>
+            {[0,1,2,3].map(i=>(
+              <span key={i} style={{display:"inline-block",width:3,height:18,borderRadius:2,background:voiceFlash?"#4ADE80":"#7AB89A",transformOrigin:"center",animation:`listenBar 0.9s ease-in-out ${i*0.15}s infinite`}}/>
+            ))}
+          </div>
+          <span style={{fontSize:13,color:voiceFlash?"#4ADE80":"rgba(255,255,255,.78)",fontWeight:700,transition:"color .2s"}}>{voiceHint||IDLE_HINT}</span>
+        </div>
+      )}
+      {/* Static hint when voice is off but a message is showing */}
+      {!voiceActive&&voiceHint&&<div style={{textAlign:"center",fontSize:13,color:"rgba(255,255,255,.7)",fontWeight:600,marginBottom:4,flexShrink:0,position:"relative",zIndex:1}}>{voiceHint}</div>}
 
       {/* Nav buttons */}
       <div style={{padding:"0 24px",display:"flex",gap:14,flexShrink:0,position:"relative",zIndex:1}}>
@@ -647,7 +682,7 @@ function CookMode({recipe,onClose}){
         }
         <button onClick={voiceActive?stopVoice:startVoice}
           title={voiceActive?"Tap to stop voice — just say: next, back, repeat, what's next, or timer":"Tap to enable hands-free voice — stays on until you tap again"}
-          style={{width:54,padding:"15px 0",borderRadius:"var(--r-md)",border:`1.5px solid ${voiceActive?"rgba(122,184,154,.6)":"rgba(255,255,255,.25)"}`,background:voiceActive?"rgba(122,184,154,.2)":"rgba(255,255,255,.08)",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",animation:voiceActive?"pulse 2s infinite":"none",fontFamily:"var(--font-ui)"}}>🎙️</button>
+          style={{width:54,padding:"15px 0",borderRadius:"var(--r-md)",border:`1.5px solid ${voiceFlash?"#4ADE80":voiceActive?"rgba(122,184,154,.7)":"rgba(255,255,255,.25)"}`,background:voiceFlash?"rgba(74,222,128,.35)":voiceActive?"rgba(122,184,154,.25)":"rgba(255,255,255,.08)",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:voiceActive?"0 0 0 0 rgba(122,184,154,.5)":"none",animation:voiceActive?"pulse 1.6s ease-in-out infinite":"none",transition:"background .2s,border-color .2s",fontFamily:"var(--font-ui)"}}>🎙️</button>
       </div>
     </div>
   );
@@ -2267,6 +2302,7 @@ function GroceryTab(){
 function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onFixImages,onWhatsNew}){
   const[dark,setDark]=useState(()=>{try{return localStorage.getItem(KEYS.t)==="dark";}catch{return false;}});
   const[wakeLock,setWakeLock]=useState(()=>{try{return localStorage.getItem("fnp_wakelock")!=="off";}catch{return true;}});
+  const[wakePhrase,setWakePhrase]=useState(()=>{try{return localStorage.getItem("fnp_wakephrase")||"";}catch{return "";}});
   const[signingIn,setSigningIn]=useState(false);
   const[fixing,setFixing]=useState(false);
   const[fixMsg,setFixMsg]=useState("");
@@ -2323,6 +2359,11 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
   function toggleWakeLock(){
     const next=!wakeLock;setWakeLock(next);
     try{next?localStorage.removeItem("fnp_wakelock"):localStorage.setItem("fnp_wakelock","off");}catch{}
+  }
+  function saveWakePhrase(v){
+    const clean=v.replace(/[\n\r]/g,"");
+    setWakePhrase(clean);
+    try{clean.trim()?localStorage.setItem("fnp_wakephrase",clean.trim()):localStorage.removeItem("fnp_wakephrase");}catch{}
   }
 
   async function handleSignIn(){
@@ -2403,6 +2444,12 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
             <button onClick={toggleWakeLock} style={{width:48,height:26,borderRadius:13,border:"none",cursor:"pointer",background:wakeLock?"var(--moss)":"var(--sage-lt)",position:"relative",transition:"background .2s",flexShrink:0}}>
               <div style={{position:"absolute",top:3,left:wakeLock?24:3,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,.2)"}}/>
             </button>
+          </div>
+          <div style={{padding:"14px 0",borderBottom:"1px solid var(--sage-pale)"}}>
+            <div style={label}>Cook Mode Wake Phrase</div>
+            <div style={{...sub,marginBottom:8}}>Optional. Set a custom phrase to trigger voice commands (e.g. "hey chef"). Leave blank to use the default "Hey Fork" — short commands like "next" work either way.</div>
+            <input value={wakePhrase} onChange={e=>saveWakePhrase(e.target.value)} placeholder="Hey Fork (default)" maxLength={30}
+              style={{width:"100%",background:"var(--cream)",border:"1.5px solid var(--parchment)",borderRadius:"var(--r-md)",padding:"10px 13px",fontSize:14,outline:"none",color:"var(--ink)"}}/>
           </div>
         </div>
 

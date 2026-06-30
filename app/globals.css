@@ -185,3 +185,9 @@ input::placeholder, textarea::placeholder { color: var(--silver); }
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Voice / listening feedback ──────────────────────────────── */
+@keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .55; transform: scale(1.06); } }
+@keyframes listenBar { 0%,100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+@keyframes voiceFlash { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes voicePop { 0% { transform: scale(0.6); opacity: 0; } 40% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }

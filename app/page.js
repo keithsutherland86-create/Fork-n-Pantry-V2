@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.32";
+const APP_VERSION = "2.33";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.33", title:"Remove command beep", items:[
+    "Removed the confirmation beep on commands — only the wake-phrase chime remains",
+  ]},
   { v:"2.32", title:"Fix audio interference with voice readout", items:[
     "Beeps no longer interfere with spoken step readouts — shared audio context, speech delayed slightly after tone",
   ]},
@@ -484,10 +487,10 @@ function CookMode({recipe,onClose}){
   function act(cmd){
     if(cmd==="whatsnext"){
       const nextIdx=Math.min(stepRef.current+1,total-1);
-      if(nextIdx>stepRef.current){setStep(nextIdx);setTimeout(()=>speak(steps[nextIdx]),180);setVoiceHint(`→ Step ${nextIdx+1}`);}
-      else{setTimeout(()=>speak("That's the last step."),180);setVoiceHint("Last step");}
+      if(nextIdx>stepRef.current){setStep(nextIdx);speak(steps[nextIdx]);setVoiceHint(`→ Step ${nextIdx+1}`);}
+      else{speak("That's the last step.");setVoiceHint("Last step");}
     }
-    else if(cmd==="repeat"){setTimeout(()=>speak(steps[stepRef.current]),180);setVoiceHint("↻ Reading step");}
+    else if(cmd==="repeat"){speak(steps[stepRef.current]);setVoiceHint("↻ Reading step");}
     else if(cmd==="next"){setStep(s=>Math.min(total-1,s+1));setVoiceHint("→ Next step");}
     else if(cmd==="back"){setStep(s=>Math.max(0,s-1));setVoiceHint("← Back");}
     else if(cmd==="timer"){
@@ -495,8 +498,6 @@ function CookMode({recipe,onClose}){
       if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");}
       else{speak("No timer found in this step.");setVoiceHint("No timer in this step");}
     }
-    // Audio + visual confirmation that a command was heard
-    playTone(1047,0.09,0.14);
     setVoiceFlash(true);
     setTimeout(()=>setVoiceFlash(false),650);
     if(navigator.vibrate)try{navigator.vibrate(40);}catch{}

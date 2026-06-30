@@ -3,6 +3,25 @@ import { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { getSupabase } from "../lib/supabase";
 
+// ─── Version & release notes ────────────────────────────────────────────────
+// Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
+const APP_VERSION = "2.14";
+const CHANGELOG = [
+  { v:"2.14", title:"What's New screen", items:[
+    "Added this What's New screen — find it any time under Settings → What's New",
+  ]},
+  { v:"2.13", title:"Collaboration & polish", items:[
+    "Shared cookbooks now show recipes added by collaborators, live — and your additions sync to them too",
+    "See who's joined a cookbook you own, with an invite button right in the cookbook",
+    "Tap a time in any recipe step or Cook Mode (e.g. \"15 minutes\") to start a timer instantly",
+    "Grocery unit changer can now convert between cups and grams for dry and wet ingredients",
+    "Smarter grocery aisles — items like almond butter now land in Pantry, not Dairy",
+    "New 'Fix Images' tool in Settings to permanently restore photos on older recipes",
+    "Recipe imports now follow a 'full recipe' link in a video's caption for far better results",
+    "Images load more reliably, and AI Refresh reports clearly what it improved",
+  ]},
+];
+
 // ─── Storage ──────────────────────────────────────────────────────────────────
 const KEYS = { r:"fnp_r4", c:"fnp_c3", p:"fnp_p3", g:"fnp_g1", t:"fnp_theme" };
 const load = k => { try { const v = JSON.parse(localStorage.getItem(k)||"null"); return v || []; } catch { return []; } };
@@ -1876,7 +1895,7 @@ function GroceryTab(){
 }
 
 // ─── SETTINGS TAB ─────────────────────────────────────────────────────────────
-function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onFixImages}){
+function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onFixImages,onWhatsNew}){
   const[dark,setDark]=useState(()=>{try{return localStorage.getItem(KEYS.t)==="dark";}catch{return false;}});
   const[signingIn,setSigningIn]=useState(false);
   const[fixing,setFixing]=useState(false);
@@ -2040,8 +2059,15 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
         <div style={{marginBottom:20}}>
           <div style={{fontSize:11,fontWeight:700,color:"var(--moss)",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4,paddingBottom:6,borderBottom:"1.5px solid var(--parchment)"}}>About</div>
           <div style={row}>
+            <div>
+              <div style={label}>What's New</div>
+              <div style={sub}>See recent changes and improvements</div>
+            </div>
+            <button onClick={onWhatsNew} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>✨ What's New</button>
+          </div>
+          <div style={row}>
             <div style={label}>App Version</div>
-            <span style={{fontSize:13,color:"var(--mist)"}}>Fork n Pantry v2.13</span>
+            <span style={{fontSize:13,color:"var(--mist)"}}>Fork n Pantry v{APP_VERSION}</span>
           </div>
           <div style={{marginTop:14,padding:"14px 16px",background:"var(--sage-pale)",borderRadius:"var(--r-md)",border:"1px solid var(--sage-lt)"}}>
             <div className="serif" style={{fontWeight:600,fontSize:16,color:"var(--forest)",marginBottom:6}}>Fork n Pantry</div>
@@ -2324,6 +2350,41 @@ function HelpModal({onClose}){
   );
 }
 
+function WhatsNewModal({onClose}){
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(15,24,17,.65)",backdropFilter:"blur(5px)",WebkitBackdropFilter:"blur(5px)",zIndex:600,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"var(--linen)",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"92vh",display:"flex",flexDirection:"column",boxShadow:"0 -8px 48px rgba(15,24,17,.25)",paddingBottom:"env(safe-area-inset-bottom)"}}>
+        <div style={{width:34,height:4,background:"var(--sage-lt)",borderRadius:2,margin:"12px auto 0",flexShrink:0}}/>
+        <div style={{padding:"14px 20px 10px",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div className="serif" style={{fontWeight:600,fontSize:22,color:"var(--forest)"}}>✨ What's New</div>
+            <div style={{fontSize:13,color:"var(--dust)",marginTop:2}}>Recent improvements to Fork n Pantry</div>
+          </div>
+          <button onClick={onClose} style={{background:"var(--sage-pale)",border:"none",borderRadius:"50%",width:32,height:32,fontSize:18,cursor:"pointer",color:"var(--forest)",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+        <div style={{overflowY:"auto",flex:1,padding:"0 20px 24px"}}>
+          {CHANGELOG.map((rel,i)=>(
+            <div key={rel.v} style={{marginBottom:20}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <span style={{fontSize:11,fontWeight:700,color:"#fff",background:"var(--forest)",borderRadius:20,padding:"3px 10px"}}>v{rel.v}</span>
+                <span className="serif" style={{fontWeight:600,fontSize:16,color:"var(--forest)"}}>{rel.title}</span>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:9}}>
+                {rel.items.map((it,j)=>(
+                  <div key={j} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                    <span style={{color:"var(--moss)",fontSize:14,flexShrink:0,marginTop:1}}>✓</span>
+                    <span style={{fontSize:14,color:"var(--charcoal)",lineHeight:1.5}}>{it}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Welcome screen ───────────────────────────────────────────────────────────
 function WelcomeScreen({onSignIn,onContinue}){
   const[busy,setBusy]=useState(false);
@@ -2483,6 +2544,7 @@ function AppInner(){
   const[sharedPrefill,setSharedPrefill]=useState("");
   const[backToast,setBackToast]=useState(false);
   const[showHelp,setShowHelp]=useState(false);
+  const[showWhatsNew,setShowWhatsNew]=useState(false);
   const[globalModalRecipe,setGlobalModalRecipe]=useState(null);
   const[session,setSession]=useState(null);
   const[syncStatus,setSyncStatus]=useState("idle");
@@ -2517,6 +2579,12 @@ function AppInner(){
     // Show welcome screen on first ever open
     const seen=localStorage.getItem("fnp_welcomed");
     if(!seen)setWelcomed(false);
+    // Auto-show What's New once after an app update (not on first-ever open)
+    try{
+      const lastVer=localStorage.getItem("fnp_last_version");
+      if(seen&&lastVer&&lastVer!==APP_VERSION)setShowWhatsNew(true);
+      localStorage.setItem("fnp_last_version",APP_VERSION);
+    }catch{}
     history.pushState({page:"app"},"");
 
     // Auth: get existing session, then listen for changes
@@ -2683,6 +2751,7 @@ function AppInner(){
       {!welcomed&&<WelcomeScreen onSignIn={handleSignIn} onContinue={()=>{dismissWelcome();}}/>}
       <Header count={recipes.length} onHelp={()=>setShowHelp(true)} session={session} onAccountPress={()=>setTab("settings")}/>
       {showHelp&&<HelpModal onClose={()=>setShowHelp(false)}/>}
+      {showWhatsNew&&<WhatsNewModal onClose={()=>setShowWhatsNew(false)}/>}
       <RecipeModal recipe={globalModalRecipe} onClose={()=>setGlobalModalRecipe(null)} onUpdate={r=>{updateRecipe(r);setGlobalModalRecipe(r);}}/>
       {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")} onImportFail={()=>showToast("error",null,"Import failed — couldn't read that recipe")} onRefresh={session?async()=>{setSyncStatus("syncing");const cloud=await cloudLoad(session.user.id);if(cloud){setRecipes(cloud);save(KEYS.r,cloud);setSyncStatus("synced");}else setSyncStatus("idle");}:null}/>}
       {tab==="categories"&&<CookbooksTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe} onAdd={addRecipe} session={session} sharedBooks={sharedBooks} onRefreshShared={()=>sbLoadMySharedBooks(session).then(setSharedBooks)}/>}
@@ -2703,7 +2772,7 @@ function AppInner(){
       {tab==="planner"&&<PlannerTab recipes={recipes} planner={planner} setPlanner={setPlanner} onUpdate={updateRecipe}/>}
       {tab==="scan"&&<ScanTab recipes={recipes} onOpenRecipe={r=>setSelectedRecipeGlobal(r)}/>}
       {tab==="grocery"&&<GroceryTab/>}
-      {tab==="settings"&&<SettingsTab session={session} onSignIn={handleSignIn} onSignOut={handleSignOut} syncStatus={syncStatus} recipes={recipes} onImport={rs=>{const merged=[...rs.filter(r=>!recipes.find(x=>x.id===r.id)),...recipes];setRecipes(merged);save(KEYS.r,merged);}} onFixImages={fixAllImages}/>}
+      {tab==="settings"&&<SettingsTab session={session} onSignIn={handleSignIn} onSignOut={handleSignOut} syncStatus={syncStatus} recipes={recipes} onImport={rs=>{const merged=[...rs.filter(r=>!recipes.find(x=>x.id===r.id)),...recipes];setRecipes(merged);save(KEYS.r,merged);}} onFixImages={fixAllImages} onWhatsNew={()=>setShowWhatsNew(true)}/>}
       <TabBar tab={tab} setTab={setTab}/>
       {backToast&&(
         <div style={{position:"fixed",bottom:90,left:"50%",transform:"translateX(-50%)",background:"rgba(15,24,17,.88)",color:"#fff",borderRadius:24,padding:"10px 20px",fontSize:13,fontWeight:600,zIndex:500,pointerEvents:"none",backdropFilter:"blur(8px)",whiteSpace:"nowrap",boxShadow:"0 4px 16px rgba(0,0,0,.3)"}}>

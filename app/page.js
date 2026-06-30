@@ -5,12 +5,12 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.33";
+const APP_VERSION = "2.34";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
-  { v:"2.33", title:"Remove command beep", items:[
-    "Removed the confirmation beep on commands — only the wake-phrase chime remains",
+  { v:"2.34", title:"Remove all audio tones", items:[
+    "Removed all beeps — Web Audio API was causing distortion in the step readout on mobile",
   ]},
   { v:"2.32", title:"Fix audio interference with voice readout", items:[
     "Beeps no longer interfere with spoken step readouts — shared audio context, speech delayed slightly after tone",
@@ -412,14 +412,6 @@ function getStepEmojis(text){
   return[...new Set(found)].slice(0,3);
 }
 
-let _audioCtx=null;
-function getAudioCtx(){
-  try{
-    if(!_audioCtx||_audioCtx.state==="closed") _audioCtx=new(window.AudioContext||window.webkitAudioContext)();
-    if(_audioCtx.state==="suspended") _audioCtx.resume().catch(()=>{});
-    return _audioCtx;
-  }catch{return null;}
-}
 function CookMode({recipe,onClose}){
   const[step,setStep]=useState(0);
   const[ingsOpen,setIngsOpen]=useState(false);
@@ -503,23 +495,9 @@ function CookMode({recipe,onClose}){
     if(navigator.vibrate)try{navigator.vibrate(40);}catch{}
     setTimeout(()=>setVoiceHint(IDLE_HINT),1800);
   }
-  function playTone(freq=880,dur=0.13,vol=0.18){
-    try{
-      const ctx=getAudioCtx();if(!ctx)return;
-      const osc=ctx.createOscillator(),g=ctx.createGain();
-      osc.connect(g);g.connect(ctx.destination);
-      osc.frequency.value=freq;osc.type="sine";
-      g.gain.setValueAtTime(vol,ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+dur);
-      osc.start(ctx.currentTime);osc.stop(ctx.currentTime+dur);
-    }catch{}
-  }
   function disarm(){armedRef.current=false;clearTimeout(armTimerRef.current);}
   function arm(){
     armedRef.current=true;
-    // Two-tone rising chime: "I heard you, go ahead"
-    playTone(660,0.11,0.28);
-    setTimeout(()=>playTone(880,0.14,0.32),120);
     setVoiceHint("👂 Yes? (say a command)");
     clearTimeout(armTimerRef.current);
     armTimerRef.current=setTimeout(()=>{armedRef.current=false;setVoiceHint(IDLE_HINT);},8000);
@@ -592,7 +570,6 @@ function CookMode({recipe,onClose}){
   function startVoice(){
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     if(!SR){setVoiceHint("Voice not supported in this browser");return;}
-    playTone(880,0.13,0.18); // chime: listening activated
     voiceShouldRunRef.current=true;
     voiceSpawningRef.current=false;
     voiceRef.current=null;

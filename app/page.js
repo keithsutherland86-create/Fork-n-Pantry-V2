@@ -5,11 +5,21 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.24";
+const APP_VERSION = "2.25";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
-  { v:"2.17", title:"Major update: Cook, Track & Plan", major:true, items:[
+  { v:"2.25", title:"Hands-free cooking & polish", major:true, items:[
+    "Cook Mode is now front-and-centre — a big 'Start Cook Mode' button on every recipe",
+    "🔊 Read aloud reads the current step; hands-free voice is much more reliable now",
+    "Just say 'next', 'back', 'repeat', 'what's next' or 'timer' — no exact wake phrase needed",
+    "The back button now consistently closes whatever's open — modal, sheet or page",
+    "Bigger, easier-to-tap buttons for Favourites, Share and adding to your grocery list",
+    "Clearer text throughout in light mode, and the sort menu is readable in dark mode",
+    "Cookbook covers show your recipe photos (emoji only shows for empty cookbooks)",
+    "Instagram/TikTok imports that can't be read now tell you to paste the caption instead",
+  ]},
+  { v:"2.17", title:"Cook, Track & Plan", items:[
     "Cook history: tap 'Made it ★' on any recipe to log when you cooked it and give it a personal rating",
     "Personal notes: a private notes field on every recipe that AI Refresh never overwrites",
     "Pantry tracker: mark ingredients you have at home — grocery list auto-hides them",
@@ -130,8 +140,21 @@ function aggregateItems(items){
   return result;
 }
 
-// ─── Global modal back-button registry ───────────────────────────────────────
-let _closeModal = null;
+// ─── Global back-button registry ─────────────────────────────────────────────
+// LIFO stack of close handlers. The hardware/gesture back button (and the ×/Back
+// buttons) all funnel through here so behaviour is consistent everywhere: back
+// always closes the topmost open overlay (modal, sheet, sub-view) first.
+const _backHandlers = [];
+function useBackHandler(active, onClose){
+  const ref = useRef(onClose);
+  ref.current = onClose;
+  useEffect(()=>{
+    if(!active) return;
+    const fn = ()=>{ try{ ref.current && ref.current(); }catch{} };
+    _backHandlers.push(fn);
+    return ()=>{ const i=_backHandlers.indexOf(fn); if(i>=0) _backHandlers.splice(i,1); };
+  },[active]);
+}
 
 // ─── Tag colours ──────────────────────────────────────────────────────────────
 const TPAL={breakfast:["#FEF9C3","#854D0E"],lunch:["#DCFCE7","#166534"],dinner:["#EDE9FE","#5B21B6"],dessert:["#FCE7F3","#9D174D"],snack:["#D1FAE5","#065F46"],vegetarian:["#DCFCE7","#14532D"],vegan:["#BBF7D0","#14532D"],chicken:["#FEF3C7","#92400E"],pasta:["#FEE2E2","#991B1B"],soup:["#D1FAE5","#065F46"],beef:["#FEE2E2","#991B1B"],fish:["#DBEAFE","#1E40AF"],salad:["#BBFBD0","#14532D"],quick:["#EDE9FE","#4C1D95"],seafood:["#DBEAFE","#1E40AF"]};
@@ -204,6 +227,7 @@ function RImg({recipe,style:st={},className=""}){
 
 // ─── Bottom sheet ─────────────────────────────────────────────────────────────
 function Sheet({children,onClose,tall}){
+  useBackHandler(true, onClose);
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(15,24,17,.6)",backdropFilter:"blur(5px)",WebkitBackdropFilter:"blur(5px)",zIndex:400,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{background:"var(--linen)",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:tall?"94vh":"88vh",display:"flex",flexDirection:"column",boxShadow:"0 -8px 40px rgba(15,24,17,.2)",paddingBottom:"env(safe-area-inset-bottom)"}}>
@@ -369,6 +393,7 @@ function CookMode({recipe,onClose}){
   const[timer,setTimer]=useState(null);
   const[voiceActive,setVoiceActive]=useState(false);
   const[voiceHint,setVoiceHint]=useState("");
+  useBackHandler(true, onClose);
   const timerRef=useRef(null);
   const voiceRef=useRef(null);
   const steps=recipe.steps||[];
@@ -402,59 +427,73 @@ function CookMode({recipe,onClose}){
   const voiceSpawningRef=useRef(false); // prevents concurrent instances
   const armedRef=useRef(false);         // true after wake phrase, awaiting a command
   const armTimerRef=useRef(null);
+  const lastActRef=useRef({t:0,cmd:""}); // debounce: interim + final fire the same command
+  const IDLE_HINT="🎙️ Listening — say a command";
   const WAKE_RE=/\b(?:hey|hi|ok|okay|a)?\s*(?:fork|four|folk|forks|ford|for)\b/;
-  const CMD_RE=/\b(next|back|previous|prev|repeat|read|stop|timer|what)\b/;
 
-  // Run a command from the part of the utterance that follows the wake phrase (or the whole thing)
-  function runCommand(t){
-    let acted=false;
-    if(/\b(what'?s?\s+next|read\s+next)\b/.test(t)){
+  // Map a phrase to a command key (or null). Order matters — most specific first.
+  function classify(t){
+    if(/\b(what'?s?\s+next|whats\s+next|read\s+next)\b/.test(t)) return "whatsnext";
+    if(/\b(read|repeat|again|say)\b/.test(t)) return "repeat";
+    if(/\b(next|forward|continue|go on)\b/.test(t)) return "next";
+    if(/\b(back|previous|prev|last|go back)\b/.test(t)) return "back";
+    if(/\b(timer|countdown|set\s+a?\s*timer)\b/.test(t)) return "timer";
+    return null;
+  }
+  function act(cmd){
+    if(cmd==="whatsnext"){
       const nextIdx=Math.min(stepRef.current+1,total-1);
-      if(nextIdx>stepRef.current){speak(steps[nextIdx]);setVoiceHint(`→ Step ${nextIdx+1}`);acted=true;}
-      else{speak("That's the last step.");setVoiceHint("Last step");acted=true;}
+      if(nextIdx>stepRef.current){speak(steps[nextIdx]);setVoiceHint(`→ Step ${nextIdx+1}`);}
+      else{speak("That's the last step.");setVoiceHint("Last step");}
     }
-    else if(/\b(read\s+(this|step|again)|repeat)\b/.test(t)){speak(steps[stepRef.current]);setVoiceHint("↻ Reading step");acted=true;}
-    else if(/\bnext\b/.test(t)){setStep(s=>Math.min(total-1,s+1));setVoiceHint("→ Next step");acted=true;}
-    else if(/\b(back|previous|prev)\b/.test(t)){setStep(s=>Math.max(0,s-1));setVoiceHint("← Back");acted=true;}
-    else if(/\btimer\b/.test(t)){
+    else if(cmd==="repeat"){speak(steps[stepRef.current]);setVoiceHint("↻ Reading step");}
+    else if(cmd==="next"){setStep(s=>Math.min(total-1,s+1));setVoiceHint("→ Next step");}
+    else if(cmd==="back"){setStep(s=>Math.max(0,s-1));setVoiceHint("← Back");}
+    else if(cmd==="timer"){
       const m=steps[stepRef.current]?.match(TIME_RE);
-      if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");acted=true;}
-      else{speak("No timer found in this step.");setVoiceHint("No timer in this step");acted=true;}
+      if(m){startTimer(m[0],m[0]);setVoiceHint("⏱ Timer started");}
+      else{speak("No timer found in this step.");setVoiceHint("No timer in this step");}
     }
-    return acted;
+    setTimeout(()=>setVoiceHint(IDLE_HINT),1800);
   }
   function disarm(){armedRef.current=false;clearTimeout(armTimerRef.current);}
   function arm(){
     armedRef.current=true;
     setVoiceHint("👂 Yes? (say a command)");
     clearTimeout(armTimerRef.current);
-    armTimerRef.current=setTimeout(()=>{armedRef.current=false;setVoiceHint("🎙️ Say 'Hey Fork…'");},8000);
+    armTimerRef.current=setTimeout(()=>{armedRef.current=false;setVoiceHint(IDLE_HINT);},8000);
   }
 
+  // Decide whether a heard phrase should trigger a command.
+  // Three accepted paths (most reliable → most guarded):
+  //  1) wake phrase present → run the command after it (or arm if none yet)
+  //  2) recently armed by a wake phrase → any command counts
+  //  3) a SHORT utterance (≤3 words) that is essentially just a command word
+  // The short-utterance path is what makes it responsive; the word-count cap keeps
+  // normal kitchen conversation from triggering it.
   function handleVoiceResult(raw){
-    const lc=(raw||"").toLowerCase().trim();
-    if(!lc)return;
+    const lc=(raw||"").toLowerCase().trim().replace(/[.,!?]/g,"");
+    if(!lc)return false;
     const hasWake=WAKE_RE.test(lc);
+    const after=hasWake?lc.replace(WAKE_RE,"").trim():lc;
+    const wordCount=after.split(/\s+/).filter(Boolean).length;
+    let cmd=null;
     if(hasWake){
-      // Take whatever follows the wake phrase; if a command is there, run it now
-      const after=lc.replace(WAKE_RE,"").trim();
-      if(after&&CMD_RE.test(after)){
-        const ok=runCommand(after);
-        disarm();
-        if(ok)setTimeout(()=>setVoiceHint("🎙️ Say 'Hey Fork…'"),1800);
-        else setVoiceHint("🎙️ Say 'Hey Fork…'");
-      } else {
-        // Wake phrase alone — arm and wait for the command in a follow-up utterance
-        arm();
-      }
-      return;
+      cmd=classify(after);
+      if(!cmd){arm();return false;}   // "Hey Fork" alone → arm and wait
+    } else if(armedRef.current){
+      cmd=classify(lc);
+    } else if(wordCount<=3){
+      cmd=classify(lc);
     }
-    // No wake phrase: only act if we were armed by a recent wake phrase
-    if(armedRef.current&&CMD_RE.test(lc)){
-      const ok=runCommand(lc);
-      disarm();
-      if(ok)setTimeout(()=>setVoiceHint("🎙️ Say 'Hey Fork…'"),1800);
-    }
+    if(!cmd)return false;
+    // Debounce: interim + final results repeat the same phrase within a moment
+    const now=Date.now();
+    if(now-lastActRef.current.t<1400 && lastActRef.current.cmd===cmd) return false;
+    lastActRef.current={t:now,cmd};
+    disarm();
+    act(cmd);
+    return true;
   }
 
   function spawnRecognition(){
@@ -465,11 +504,18 @@ function CookMode({recipe,onClose}){
     if(voiceSpawningRef.current||voiceRef.current)return;
     voiceSpawningRef.current=true;
     const r=new SR();
-    // continuous=false + auto-restart is far more reliable on mobile than continuous=true
-    r.continuous=false;r.interimResults=false;r.lang="en-AU";
+    // interimResults=true → react to a command the moment it's recognised (don't wait
+    // for the final result). continuous=false + auto-restart stays reliable on mobile.
+    r.continuous=false;r.interimResults=true;r.lang="en-AU";
     r.onresult=e=>{
-      const raw=e.results[e.results.length-1]?.[0]?.transcript||"";
-      handleVoiceResult(raw);
+      // Scan all results in this batch (interim + final) for a command
+      let acted=false;
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        const raw=e.results[i]?.[0]?.transcript||"";
+        if(handleVoiceResult(raw)){acted=true;break;}
+      }
+      // After acting, restart fresh so the recognised buffer doesn't re-fire
+      if(acted){try{r.stop();}catch{}}
     };
     r.onerror=err=>{
       if(err.error!=="no-speech"&&err.error!=="aborted")setVoiceHint("Mic error — retrying…");
@@ -477,8 +523,8 @@ function CookMode({recipe,onClose}){
     r.onend=()=>{
       voiceRef.current=null;
       voiceSpawningRef.current=false;
-      // Wait briefly then restart — gives the browser mic a moment to release
-      if(voiceShouldRunRef.current)setTimeout(spawnRecognition,300);
+      // Restart quickly so listening feels continuous
+      if(voiceShouldRunRef.current)setTimeout(spawnRecognition,200);
     };
     try{r.start();voiceRef.current=r;voiceSpawningRef.current=false;}
     catch{voiceRef.current=null;voiceSpawningRef.current=false;if(voiceShouldRunRef.current)setTimeout(spawnRecognition,500);}
@@ -489,8 +535,9 @@ function CookMode({recipe,onClose}){
     voiceShouldRunRef.current=true;
     voiceSpawningRef.current=false;
     voiceRef.current=null;
+    lastActRef.current={t:0,cmd:""};
     setVoiceActive(true);
-    setVoiceHint("🎙️ Say 'Hey Fork, next'");
+    setVoiceHint(IDLE_HINT);
     spawnRecognition();
   }
   function stopVoice(){
@@ -599,7 +646,7 @@ function CookMode({recipe,onClose}){
           :<button onClick={onClose} style={{flex:2,padding:"15px 0",borderRadius:"var(--r-md)",border:"none",background:"linear-gradient(160deg,#7AB89A,#4A9A72)",color:"#0A1A10",fontSize:15,fontWeight:800,cursor:"pointer",boxShadow:"0 4px 20px rgba(74,222,128,.25)",fontFamily:"var(--font-ui)"}}>Done! 🎉</button>
         }
         <button onClick={voiceActive?stopVoice:startVoice}
-          title={voiceActive?"Tap to stop voice — say 'Hey Fork, next / back / repeat / timer'":"Tap to enable hands-free voice — stays on until you tap again"}
+          title={voiceActive?"Tap to stop voice — just say: next, back, repeat, what's next, or timer":"Tap to enable hands-free voice — stays on until you tap again"}
           style={{width:54,padding:"15px 0",borderRadius:"var(--r-md)",border:`1.5px solid ${voiceActive?"rgba(122,184,154,.6)":"rgba(255,255,255,.25)"}`,background:voiceActive?"rgba(122,184,154,.2)":"rgba(255,255,255,.08)",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",animation:voiceActive?"pulse 2s infinite":"none",fontFamily:"var(--font-ui)"}}>🎙️</button>
       </div>
     </div>
@@ -609,6 +656,7 @@ function CookMode({recipe,onClose}){
 // ─── Recipe detail modal ──────────────────────────────────────────────────────
 // ─── Edit modal ───────────────────────────────────────────────────────────────
 function EditModal({recipe,onSave,onClose}){
+  useBackHandler(true, onClose);
   const inp={background:"var(--cream)",border:"1.5px solid var(--parchment)",borderRadius:"var(--r-md)",padding:"9px 12px",fontSize:14,outline:"none",color:"var(--ink)",width:"100%"};
   const ingToStr=ing=>typeof ing==="string"?ing:fmtIng(ing,"original",1);
   const[refreshing,setRefreshing]=useState(false);
@@ -824,10 +872,8 @@ function RecipeModal({recipe,onClose,onUpdate}){
     if(recipe){setServings(recipe.servings||4);setEditing(false);setCookMode(false);setCheckedIngs(new Set());setTimer(null);setMyNotes(recipe.myNotes||"");setNotesEditing(false);setRatingPending(false);}
   },[recipe?.id]);
 
-  useEffect(()=>{
-    if(recipe){ _closeModal=onClose; } else { _closeModal=null; }
-    return()=>{ _closeModal=null; };
-  },[recipe,onClose]);
+  // Back button closes this modal (CookMode/EditModal register on top when open)
+  useBackHandler(!!recipe && !cookMode && !editing, onClose);
 
   useEffect(()=>{
     if(timer?.running){
@@ -922,14 +968,14 @@ function RecipeModal({recipe,onClose,onUpdate}){
                   localStorage.setItem(KEYS.g,JSON.stringify([...existing,...newItems]));
                   setCheckedIngs(new Set());
                   alert(`${newItems.length} ingredient${newItems.length!==1?"s":""} added to grocery list`);
-                }} className="btn-primary" style={{fontSize:11,padding:"3px 10px",borderRadius:20}}>+ Grocery</button>}
+                }} className="btn-primary" style={{fontSize:13,padding:"7px 14px",borderRadius:20}}>+ Grocery</button>}
                 <button onClick={()=>{
                   const lines=recipe.ingredients.map(ing=>hasStr?fmtIng(ing,unit,scale):(typeof ing==="string"?ing:ing.name||""));
                   const newItems=lines.map(text=>({id:Date.now().toString()+Math.random(),text,recipe:recipe.title,checked:false}));
                   const existing=JSON.parse(localStorage.getItem(KEYS.g)||"[]");
                   localStorage.setItem(KEYS.g,JSON.stringify([...existing,...newItems]));
                   alert(`All ${newItems.length} ingredients added to grocery list`);
-                }} className="btn-ghost" style={{fontSize:11,padding:"3px 10px",borderRadius:20}}>+ All</button>
+                }} className="btn-ghost" style={{fontSize:13,padding:"7px 14px",borderRadius:20}}>+ All</button>
               </div>
             </div>
             <ul style={{listStyle:"none",marginBottom:20}}>
@@ -949,9 +995,13 @@ function RecipeModal({recipe,onClose,onUpdate}){
           </>}
 
           {recipe.steps?.length>0&&<>
+            {/* Prominent Cook Mode launcher */}
+            <button onClick={()=>setCookMode(true)}
+              style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:10,background:"linear-gradient(135deg,#2D5441,#1A3028)",color:"#fff",border:"none",borderRadius:"var(--r-lg)",padding:"16px 0",fontSize:17,fontWeight:800,cursor:"pointer",marginBottom:18,boxShadow:"0 6px 22px rgba(26,48,40,.35),0 2px 6px rgba(26,48,40,.2)",letterSpacing:"-0.01em"}}>
+              <span style={{fontSize:22}}>👨‍🍳</span> Start Cook Mode
+            </button>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,paddingBottom:7,borderBottom:"1.5px solid var(--parchment)"}}>
               <h3 className="serif" style={{fontSize:19,fontWeight:600,color:"var(--forest)"}}>Method</h3>
-              <button onClick={()=>setCookMode(true)} style={{background:"var(--forest)",color:"#fff",border:"none",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>👨‍🍳 Cook Mode</button>
             </div>
             <ol style={{listStyle:"none",paddingBottom:8}}>
               {recipe.steps.map((step,i)=>(
@@ -1314,13 +1364,13 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared,o
       {/* Filter pills row */}
       <div style={{display:"flex",gap:6,padding:"10px 16px 0",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
         {/* Favourites pill */}
-        <button onClick={()=>{setShowFavs(f=>!f);setTag("");}} style={{flexShrink:0,background:showFavs?"#E11D48":"var(--cream)",color:showFavs?"#fff":"var(--ink)",border:`1px solid ${showFavs?"#E11D48":"var(--sage-lt)"}`,borderRadius:20,padding:"4px 13px",fontSize:11,fontWeight:700,cursor:"pointer",letterSpacing:"0.04em",transition:"all .15s"}}>❤️ Favourites</button>
+        <button onClick={()=>{setShowFavs(f=>!f);setTag("");}} style={{flexShrink:0,background:showFavs?"#E11D48":"var(--cream)",color:showFavs?"#fff":"var(--ink)",border:`1px solid ${showFavs?"#E11D48":"var(--sage-lt)"}`,borderRadius:22,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",letterSpacing:"0.02em",transition:"all .15s"}}>❤️ Favourites</button>
         {/* What can I make? */}
-        <button onClick={()=>setShowMake(true)} style={{flexShrink:0,background:"var(--cream)",color:"var(--ink)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"4px 13px",fontSize:11,fontWeight:700,cursor:"pointer",letterSpacing:"0.04em",whiteSpace:"nowrap"}}>🥗 What can I make?</button>
+        <button onClick={()=>setShowMake(true)} style={{flexShrink:0,background:"var(--cream)",color:"var(--ink)",border:"1px solid var(--sage-lt)",borderRadius:22,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",letterSpacing:"0.02em",whiteSpace:"nowrap"}}>🥗 What can I make?</button>
         {allTags.map(t=>(
-          <button key={t} onClick={()=>{setTag(t===tag?"":t);setShowFavs(false);}} style={{flexShrink:0,background:t===tag?"var(--forest)":"var(--cream)",color:t===tag?"#fff":"var(--ink)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"4px 13px",fontSize:11,fontWeight:700,cursor:"pointer",textTransform:"uppercase",letterSpacing:"0.04em",transition:"all .15s",boxShadow:t===tag?"var(--sh-xs)":"none"}}>{t}</button>
+          <button key={t} onClick={()=>{setTag(t===tag?"":t);setShowFavs(false);}} style={{flexShrink:0,background:t===tag?"var(--forest)":"var(--cream)",color:t===tag?"#fff":"var(--ink)",border:"1px solid var(--sage-lt)",borderRadius:22,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",textTransform:"uppercase",letterSpacing:"0.04em",transition:"all .15s",boxShadow:t===tag?"var(--sh-xs)":"none"}}>{t}</button>
         ))}
-        {(tag||showFavs)&&<button onClick={()=>{setTag("");setShowFavs(false);}} style={{flexShrink:0,background:"#FEE2E2",color:"#991B1B",border:"1px solid #FECACA",borderRadius:20,padding:"4px 11px",fontSize:11,fontWeight:700,cursor:"pointer"}}>✕ Clear</button>}
+        {(tag||showFavs)&&<button onClick={()=>{setTag("");setShowFavs(false);}} style={{flexShrink:0,background:"#FEE2E2",color:"#991B1B",border:"1px solid #FECACA",borderRadius:22,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>✕ Clear</button>}
       </div>
 
       {/* List */}
@@ -1427,6 +1477,10 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
   const[addingToShared,setAddingToShared]=useState(false);
   const[publishing,setPublishing]=useState(false);
   const[ownerSharedRecipes,setOwnerSharedRecipes]=useState([]); // collaborator-added recipes for the owner's own shared book
+
+  // Back button returns from an open book sub-view to the cookbook list
+  useBackHandler(!!selected, ()=>setSelected(null));
+  useBackHandler(!!selectedShared, ()=>setSelectedShared(null));
 
   function createBook(){if(!newName.trim())return;const u=[...books,{id:Date.now().toString(),name:newName.trim(),color:CAT_COLORS[books.length%CAT_COLORS.length],emoji:newEmoji,recipeIds:[]}];setBooks(u);save(KEYS.c,u);setNewName("");setShowNew(false);}
   function deleteBook(id){const u=books.filter(c=>c.id!==id);setBooks(u);save(KEYS.c,u);if(selected===id)setSelected(null);}
@@ -1641,13 +1695,18 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
               style={{display:"flex",alignItems:"center",gap:14,background:"var(--cream)",borderRadius:"var(--r-lg)",border:"1px solid var(--parchment)",boxShadow:"var(--sh-sm)",padding:"12px 14px",cursor:"pointer",position:"relative",transition:"transform .15s,box-shadow .15s"}}
               onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="var(--sh-md)";}}
               onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="var(--sh-sm)";}}>
-              {/* Stacked covers */}
+              {/* Stacked covers — recipe images fanned out; emoji only when the book is empty */}
               <div style={{position:"relative",width:64,height:64,flexShrink:0}}>
-                {[2,1,0].map(i=>(
-                  <div key={i} style={{position:"absolute",borderRadius:10,overflow:"hidden",width:50,height:50,top:i*4,left:i*4,boxShadow:"var(--sh-xs)",background:bk.color||"var(--sage-pale)"}}>
-                    {coverRecipes[2-i]?<RImg recipe={coverRecipes[2-i]} style={{width:"100%",height:"100%"}}/>:<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>{bk.emoji||"📗"}</div>}
-                  </div>
-                ))}
+                {coverRecipes.length===0?(
+                  <div style={{position:"absolute",borderRadius:10,overflow:"hidden",width:50,height:50,top:0,left:0,boxShadow:"var(--sh-xs)",background:bk.color||"var(--sage-pale)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>{bk.emoji||"📗"}</div>
+                ):(
+                  // Render back-to-front so the first recipe sits on top
+                  [...coverRecipes].map((r,idx)=>({r,idx})).reverse().map(({r,idx})=>(
+                    <div key={idx} style={{position:"absolute",borderRadius:10,overflow:"hidden",width:50,height:50,top:idx*4,left:idx*4,zIndex:3-idx,boxShadow:"var(--sh-xs)",background:bk.color||"var(--sage-pale)"}}>
+                      <RImg recipe={r} style={{width:"100%",height:"100%"}}/>
+                    </div>
+                  ))
+                )}
               </div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:3}}>
@@ -2129,9 +2188,9 @@ function GroceryTab(){
           <div className="serif" style={{fontWeight:600,fontSize:22,color:"var(--forest)"}}>Grocery List</div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <span style={{fontSize:12,color:"var(--mist)"}}>{unchecked.length} left</span>
-            <button onClick={shareList} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"4px 11px",fontSize:11,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>📤 Share</button>
-            {checked.length>0&&<button onClick={clearChecked} style={{background:"#FEE2E2",border:"1px solid #FECACA",borderRadius:20,padding:"4px 11px",fontSize:11,fontWeight:700,cursor:"pointer",color:"#991B1B"}}>Clear done</button>}
-            {items.length>0&&<button onClick={clearAll} style={{background:"#FEE2E2",border:"1px solid #FECACA",borderRadius:20,padding:"4px 11px",fontSize:11,fontWeight:700,cursor:"pointer",color:"#991B1B"}}>Clear all</button>}
+            <button onClick={shareList} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"7px 14px",fontSize:13,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>📤 Share</button>
+            {checked.length>0&&<button onClick={clearChecked} style={{background:"#FEE2E2",border:"1px solid #FECACA",borderRadius:20,padding:"7px 14px",fontSize:13,fontWeight:700,cursor:"pointer",color:"#991B1B"}}>Clear done</button>}
+            {items.length>0&&<button onClick={clearAll} style={{background:"#FEE2E2",border:"1px solid #FECACA",borderRadius:20,padding:"7px 14px",fontSize:13,fontWeight:700,cursor:"pointer",color:"#991B1B"}}>Clear all</button>}
           </div>
         </div>
         <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
@@ -2629,7 +2688,7 @@ const HELP_SECTIONS=[
   {icon:"📋",title:"Adding Recipes",body:"Tap + Add Recipe on the Recipes tab. Paste a URL from any recipe website and AI will extract everything automatically. You can also take a photo of a cookbook page, paste copied text, or enter a recipe manually."},
   {icon:"🔍",title:"Searching & Filtering",body:"Use the search bar to find recipes by name, tag, or source. Filter by tag using the pills below the search bar. Toggle ❤️ Favourites to see only your saved favourites. Use A–Z or Calories sort to reorder."},
   {icon:"🥗",title:"What Can I Make?",body:"Tap '🥗 What can I make?' on the Recipes tab. Type in ingredients you have on hand separated by commas — the app will score and rank your recipes by how many ingredients match."},
-  {icon:"👨‍🍳",title:"Cook Mode",body:"Open any recipe and scroll to the Method section. Tap 'Cook Mode' for a full-screen step-by-step guide. Tap 🔊 Read aloud to hear the current step spoken. Tap 🎙️ once to enable hands-free voice — it stays on until you tap again. Say 'Hey Fork' to wake it (it ignores normal kitchen chatter otherwise), then a command — either in one breath ('Hey Fork, next') or as a follow-up after it answers ('Hey Fork' … 'next'). Commands: next, back, repeat, read this, what's next (previews without moving), and timer."},
+  {icon:"👨‍🍳",title:"Cook Mode",body:"Open any recipe and tap the big 'Start Cook Mode' button for a full-screen, step-by-step guide. Tap 🔊 Read aloud to hear the current step. Tap 🎙️ once to enable hands-free voice — it stays on until you tap again. Then just say a short command: 'next', 'back', 'repeat', 'what's next' (previews the next step without moving), or 'timer'. You can also prefix with 'Hey Fork' if you like. The screen stays awake while you cook (toggle in Settings)."},
   {icon:"⏱",title:"Timers",body:"Inside a recipe, tap the prep time or cook time chip to start a countdown timer. The timer banner shows at the top of the recipe. Tap Pause/Resume as needed. The banner turns amber when under 30 seconds and red when done."},
   {icon:"🛒",title:"Grocery List",body:"Open any recipe and tap '+ All' under Ingredients to add everything to your list, or tick individual ingredients and tap '+ Grocery' to add just those. The Grocery tab shows your full list. Tap items to check them off. Share the list via the 📤 button."},
   {icon:"📅",title:"Meal Planner",body:"The Planner tab shows a weekly meal grid. Tap any slot to assign a recipe. Use the ‹ › arrows to navigate between weeks. Tap 'Grocery' to build a shopping list from all planned meals automatically."},
@@ -2642,6 +2701,7 @@ const HELP_SECTIONS=[
 
 function HelpModal({onClose}){
   const[open,setOpen]=useState(null);
+  useBackHandler(true, onClose);
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(15,24,17,.65)",backdropFilter:"blur(5px)",WebkitBackdropFilter:"blur(5px)",zIndex:600,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{background:"var(--linen)",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"92vh",display:"flex",flexDirection:"column",boxShadow:"0 -8px 48px rgba(15,24,17,.25)",paddingBottom:"env(safe-area-inset-bottom)"}}>
@@ -2675,6 +2735,7 @@ function HelpModal({onClose}){
 }
 
 function WhatsNewModal({onClose}){
+  useBackHandler(true, onClose);
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(15,24,17,.65)",backdropFilter:"blur(5px)",WebkitBackdropFilter:"blur(5px)",zIndex:600,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{background:"var(--linen)",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"92vh",display:"flex",flexDirection:"column",boxShadow:"0 -8px 48px rgba(15,24,17,.25)",paddingBottom:"env(safe-area-inset-bottom)"}}>
@@ -2984,9 +3045,18 @@ function AppInner(){
     }
   }
 
+  // Cookbook join prompt closes on back too
+  useBackHandler(!!joinPreview, ()=>setJoinPreview(null));
+
   useEffect(()=>{
     function onPop(){
-      if(_closeModal){_closeModal();_closeModal=null;history.pushState({page:"app"},"");return;}
+      // Close the topmost open overlay (modal, sheet, sub-view) first — consistent everywhere
+      if(_backHandlers.length){
+        const fn=_backHandlers[_backHandlers.length-1];
+        fn();
+        history.pushState({page:"app"},"");
+        return;
+      }
       const now=Date.now();
       const timeSinceLast=now-lastBackRef.current;
       if(timeSinceLast<2000&&lastBackRef.current>0){return;}

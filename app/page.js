@@ -1607,6 +1607,20 @@ const _VOL={'tsp':4.929,'teaspoon':4.929,'teaspoons':4.929,'tbsp':14.787,'tables
 const _WGT={'g':1,'gram':1,'grams':1,'kg':1000,'kilogram':1000,'kilograms':1000,'oz':28.349,'ounce':28.349,'ounces':28.349,'lb':453.592,'lbs':453.592,'pound':453.592,'pounds':453.592};
 const VOL_CYCLE=['cup','tbsp','tsp','ml'];
 const WGT_CYCLE=['g','kg','oz'];
+// Approx grams per US cup for common dry/semi-dry ingredients — lets us convert cups↔grams.
+// Keyword match is longest-wins so "brown sugar" beats "sugar", "almond flour" beats "flour".
+const _GPC={
+  // dry / semi-dry — grams per US cup
+  'plain flour':120,'all purpose flour':120,'all-purpose flour':120,'self raising flour':120,'self-raising flour':120,'bread flour':127,'flour':120,'almond meal':96,'almond flour':96,'almonds':143,'cashews':137,'walnuts':117,'caster sugar':200,'white sugar':200,'granulated sugar':200,'brown sugar':220,'icing sugar':120,'powdered sugar':120,'sugar':200,'cocoa':100,'cacao':100,'rolled oats':90,'oats':90,'rice':185,'breadcrumbs':108,'desiccated coconut':80,'shredded coconut':80,'cornflour':120,'cornstarch':120,'cornmeal':122,'polenta':160,'chocolate chips':170,'choc chips':170,'chia seeds':170,'chia':170,'flaxseed':150,'protein powder':120,'peanut butter':256,'almond butter':256,'salt':273,
+  // wet — grams per US cup (≈ density × 236.588)
+  'water':237,'milk':245,'almond milk':240,'oat milk':240,'soy milk':245,'coconut milk':237,'buttermilk':245,'cream':238,'thickened cream':238,'heavy cream':238,'sour cream':230,'yoghurt':245,'yogurt':245,'olive oil':216,'vegetable oil':218,'oil':218,'melted butter':227,'butter':227,'honey':340,'maple syrup':322,'golden syrup':340,'molasses':328,'stock':240,'broth':240,'tomato paste':262,'passata':244,'coconut cream':237,'condensed milk':306,'evaporated milk':252,'vanilla':208,'soy sauce':255,'vinegar':239};
+function _densityGPerMl(name){
+  if(!name)return null;
+  const n=name.toLowerCase();
+  let best=null,bestLen=0;
+  for(const k in _GPC){if(k.length>bestLen&&n.includes(k)){best=_GPC[k];bestLen=k.length;}}
+  return best?best/236.588:null; // grams per ml
+}
 function _evalFrac(s){return s.trim().split(/\s+/).reduce((t,p)=>{if(p.includes('/'))return t+parseFloat(p.split('/')[0])/parseFloat(p.split('/')[1]);return t+(parseFloat(p)||0);},0);}
 function _fmtQty(n){
   if(!n||!isFinite(n)||n===0)return'';
@@ -1628,14 +1642,22 @@ function _parseIng(raw){
 }
 function _utype(u){if(_VOL[u])return'vol';if(_WGT[u])return'wgt';return'count';}
 function _toBase(qty,unit,type){if(type==='vol')return qty*(_VOL[unit]||1);if(type==='wgt')return qty*(_WGT[unit]||1);return qty;}
-function _display(base,type,ov){
-  if(type==='vol'){const u=ov||(base<14?'tsp':base<60?'tbsp':base<500?'cup':'ml');return{qty:_fmtQty(base/(_VOL[u]||1)),unit:u};}
-  if(type==='wgt'){const u=ov||(base<1000?'g':'kg');return{qty:_fmtQty(base/(_WGT[u]||1)),unit:u};}
+function _display(base,type,ov,density){
+  if(type==='vol'){
+    // base is in ml; if user picked grams and we know the density, convert
+    if(ov==='g'&&density)return{qty:_fmtQty(base*density),unit:'g'};
+    const u=ov||(base<14?'tsp':base<60?'tbsp':base<500?'cup':'ml');return{qty:_fmtQty(base/(_VOL[u]||1)),unit:u};
+  }
+  if(type==='wgt'){
+    // base is in grams; if user picked a volume unit and we know the density, convert
+    if((ov==='cup'||ov==='tbsp'||ov==='tsp'||ov==='ml')&&density){const ml=base/density;return{qty:_fmtQty(ml/(_VOL[ov]||1)),unit:ov};}
+    const u=ov||(base<1000?'g':'kg');return{qty:_fmtQty(base/(_WGT[u]||1)),unit:u};
+  }
   return{qty:_fmtQty(base),unit:ov||''};
 }
-function _nextUnit(unit,type){
-  if(type==='vol'){const i=VOL_CYCLE.indexOf(unit);return VOL_CYCLE[(i<0?0:i+1)%VOL_CYCLE.length];}
-  if(type==='wgt'){const i=WGT_CYCLE.indexOf(unit);return WGT_CYCLE[(i<0?0:i+1)%WGT_CYCLE.length];}
+function _nextUnit(unit,type,hasDensity){
+  if(type==='vol'){const cyc=hasDensity?[...VOL_CYCLE,'g']:VOL_CYCLE;const i=cyc.indexOf(unit);return cyc[(i<0?0:i+1)%cyc.length];}
+  if(type==='wgt'){const cyc=hasDensity?[...WGT_CYCLE,'cup']:WGT_CYCLE;const i=cyc.indexOf(unit);return cyc[(i<0?0:i+1)%cyc.length];}
   return unit;
 }
 function _mergeItems(items){
@@ -1699,8 +1721,8 @@ function GroceryTab(){
     if(navigator.share){await navigator.share({title:"Grocery List",text}).catch(()=>{});}
     else{await navigator.clipboard.writeText(text).catch(()=>{});alert("Copied to clipboard!");}
   }
-  function cycleUnit(key,type,currentUnit){
-    setUnitOv(ov=>({...ov,[key]:_nextUnit(currentUnit,type)}));
+  function cycleUnit(key,type,currentUnit,hasDensity){
+    setUnitOv(ov=>({...ov,[key]:_nextUnit(currentUnit,type,hasDensity)}));
   }
 
   const unchecked=items.filter(i=>!i.checked);
@@ -1750,7 +1772,8 @@ function GroceryTab(){
             {its.map(m=>{
               const isMerged=groupBy==="aisle";
               const src=m.sources[0];
-              const {qty,unit}=isMerged&&m.baseQty>0?_display(m.baseQty,m.type,unitOv[m.key]):({qty:'',unit:''});
+              const density=_densityGPerMl(m.name);
+              const {qty,unit}=isMerged&&m.baseQty>0?_display(m.baseQty,m.type,unitOv[m.key],density):({qty:'',unit:''});
               const displayName=isMerged?(m.name||src?.text||''):(src?.text||'');
               const displayText=isMerged?`${qty?qty+' ':''}`:``;
               const merged=m.sources.length>1;
@@ -1762,7 +1785,7 @@ function GroceryTab(){
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                       {qty&&<span style={{fontSize:14,fontWeight:700,color:"var(--forest)"}}>{qty}</span>}
-                      {unit&&<button onClick={()=>cycleUnit(m.key,m.type,unit)}
+                      {unit&&<button onClick={()=>cycleUnit(m.key,m.type,unit,!!density)}
                         title="Tap to change unit"
                         style={{fontSize:11,fontWeight:700,background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:10,padding:"1px 7px",cursor:"pointer",color:"var(--moss)",flexShrink:0}}>
                         {unit} ↕

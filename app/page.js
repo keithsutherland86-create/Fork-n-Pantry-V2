@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.27";
+const APP_VERSION = "2.28";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.28", title:"Voice restart fix", items:[
+    "Voice listening restarts immediately after a command instead of waiting up to 10 seconds",
+  ]},
   { v:"2.26", title:"Voice feedback & custom wake word", items:[
     "Cook Mode now shows animated listening bars and flashes green when it hears a command",
     "Set your own wake phrase (e.g. \"hey chef\") in Settings → Appearance",
@@ -524,13 +527,14 @@ function CookMode({recipe,onClose}){
     // for the final result). continuous=false + auto-restart stays reliable on mobile.
     r.continuous=false;r.interimResults=true;r.lang="en-AU";
     r.onresult=e=>{
-      // Scan all results in this batch (interim + final) for a command.
-      // We do NOT stop after acting — the debounce in handleVoiceResult ignores the
-      // repeat (interim+final), and letting the session end naturally avoids a stuck
-      // state where onend never fires and listening dies after one command.
       for(let i=e.resultIndex;i<e.results.length;i++){
         const raw=e.results[i]?.[0]?.transcript||"";
-        if(handleVoiceResult(raw))break;
+        if(handleVoiceResult(raw)){
+          // Abort immediately so onend fires now and listening restarts in ~200ms
+          // rather than waiting for the natural silence timeout (can be 5-10s on mobile).
+          try{r.abort();}catch{}
+          break;
+        }
       }
     };
     r.onerror=err=>{

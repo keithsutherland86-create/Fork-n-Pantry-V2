@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.35";
+const APP_VERSION = "2.36";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.36", title:"Fix voice readout distortion", items:[
+    "Recognition mic now pauses while a step is being read aloud, eliminating audio interference",
+  ]},
   { v:"2.35", title:"Rainbow breathing when wake phrase heard", items:[
     "A slow cycling rainbow border pulses around Cook Mode when it's waiting for your command",
   ]},
@@ -445,12 +448,18 @@ function CookMode({recipe,onClose}){
   // Recognition runs in short bursts (continuous=false) and auto-restarts, which is far
   // more reliable on mobile than continuous=true. Saying "Hey Fork" arms it for ~8s; the
   // command can be in the same breath ("Hey Fork next") or a follow-up utterance ("next").
-  // Text-to-speech: read a step aloud, cancelling any in-progress speech first
+  // Text-to-speech: pause recognition while speaking to avoid mic/speaker interference,
+  // then restart recognition automatically when speech ends.
   function speak(text){
     if(!window.speechSynthesis)return;
+    try{voiceRef.current?.abort();}catch{}
+    voiceRef.current=null;
+    voiceSpawningRef.current=false;
     window.speechSynthesis.cancel();
     const u=new SpeechSynthesisUtterance(text);
     u.lang="en-AU";u.rate=0.92;u.pitch=1;
+    u.onend=()=>{ if(voiceShouldRunRef.current) setTimeout(spawnRecognition,400); };
+    u.onerror=()=>{ if(voiceShouldRunRef.current) setTimeout(spawnRecognition,400); };
     window.speechSynthesis.speak(u);
   }
   const voiceShouldRunRef=useRef(false);

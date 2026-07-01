@@ -1,4 +1,5 @@
 import { fetchViaApify } from "../../../lib/social";
+import { createClient } from "@supabase/supabase-js";
 
 // Apify cold-starts can take 20-40s; the default serverless timeout would kill the request
 // before it responds. Allow up to 60s.
@@ -36,20 +37,18 @@ export async function POST(req) {
     if (!imgRes.ok) return Response.json({ ok:true, image: ap.image, permanent:false, reason:`img-fetch-${imgRes.status}` });
     const contentType = imgRes.headers.get("content-type") || "image/jpeg";
     const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
-    const buf = await imgRes.arrayBuffer();
-    // Mirror the client's path scheme (userId/recipeId) so there's one image per recipe
+    const bytes = new Uint8Array(await imgRes.arrayBuffer());
+    // Mirror the client's path scheme (userId/recipeId) so there's one image per recipe.
+    // Use the SDK with upsert (same call that works client-side) — a raw REST POST 400s
+    // when the object already exists.
     const path = `${userId || "social"}/${recipeId || Date.now()}.${ext}`;
-    const up = await fetch(`${sbUrl}/storage/v1/object/recipe-images/${path}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${svcKey}`, "Content-Type": contentType, "x-upsert": "true" },
-      body: buf,
-    });
-    if (!up.ok) {
-      const detail = await up.text().catch(()=>"" );
-      console.error("Supabase upload failed:", up.status, detail);
-      return Response.json({ ok:true, image: ap.image, permanent:false, reason:`upload-${up.status}` });
+    const sb = createClient(sbUrl, svcKey, { auth:{ persistSession:false } });
+    const { error:upErr } = await sb.storage.from("recipe-images").upload(path, bytes, { contentType, upsert:true });
+    if (upErr) {
+      console.error("Supabase upload failed:", upErr.message);
+      return Response.json({ ok:true, image: ap.image, permanent:false, reason:`upload: ${(upErr.message||"error").slice(0,60)}` });
     }
-    const publicUrl = `${sbUrl}/storage/v1/object/public/recipe-images/${path}`;
+    const { data:{ publicUrl } } = sb.storage.from("recipe-images").getPublicUrl(path);
     return Response.json({ ok:true, image: publicUrl, permanent:true });
   } catch (e) {
     console.error("enrich-image rehost failed:", e?.message);

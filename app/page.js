@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.44";
+const APP_VERSION = "2.45";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.45", title:"Quieter import wait message", items:[
+    "The 'taking longer' notice now only appears if an import is genuinely slow, not on every quick retry",
+  ]},
   { v:"2.44", title:"Faster imports, robust fallback", items:[
     "Imports try the quick method first; only escalates to the slower deep fetch if needed",
     "A clear message now shows when an Instagram import is taking the longer route",
@@ -1284,8 +1287,11 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       // It's slower (cold start), so warn the user why the wait is longer.
       const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(text);
       if(!data.ok && isSocial && text.trim().startsWith("http")){
-        setLoadMsg("This one's from Instagram — grabbing the full post. This can take up to a minute…");
-        data=await callParse(text,imageBase64,imageMediaType,true);
+        // Only surface the "taking longer" notice if the retry is actually slow —
+        // most retries finish in a few seconds and shouldn't alarm the user.
+        const slowTimer=setTimeout(()=>setLoadMsg("Fetching the full post from Instagram — hang tight…"),4000);
+        try{ data=await callParse(text,imageBase64,imageMediaType,true); }
+        finally{ clearTimeout(slowTimer); }
       }
       if(!data.ok)throw new Error(data.error||"Couldn't parse — try manual entry.");
       const r=data.recipe||{};

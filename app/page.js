@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.58";
+const APP_VERSION = "2.59";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.59", title:"Import issue log", items:[
+    "Settings → Import services now keeps the last 10 failed imports with their reason, so intermittent issues aren't lost",
+  ]},
   { v:"2.58", title:"Import shows why a social fetch failed", items:[
     "Failed Instagram/TikTok imports now show the underlying reason to help diagnose issues",
   ]},
@@ -162,6 +165,16 @@ const PRO_FEATURES = [
 const KEYS = { r:"fnp_r4", c:"fnp_c3", p:"fnp_p3", g:"fnp_g1", t:"fnp_theme", pantry:"fnp_pantry1" };
 const load = k => { try { const v = JSON.parse(localStorage.getItem(k)||"null"); return v || []; } catch { return []; } };
 const save = (k,v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+
+// Keep the last 10 import failures (with reason + time) so intermittent ones aren't lost.
+const IMPORT_LOG_KEY = "fnp_import_log";
+function logImportIssue(url, msg){
+  try{
+    const log=JSON.parse(localStorage.getItem(IMPORT_LOG_KEY)||"[]");
+    log.unshift({ t:Date.now(), url:(url||"").slice(0,90), msg:(msg||"").slice(0,220) });
+    localStorage.setItem(IMPORT_LOG_KEY, JSON.stringify(log.slice(0,10)));
+  }catch{}
+}
 
 // ─── Unit conversion ──────────────────────────────────────────────────────────
 const TO_G={g:1,kg:1000,oz:28.35,lb:453.59};
@@ -1344,7 +1357,12 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       const ogImage = data.ogImage || (imageBase64 ? `data:${imageMediaType};base64,${imageBase64}` : "");
       onAdd({id:Date.now().toString(),...r,ogImage,url:text.startsWith("http")?text:"",savedAt:Date.now()});
       onClose();
-    }catch(e){setError(e.message||"Couldn't parse — try manual entry.");if(onFail)onFail();}
+    }catch(e){
+      const m=e.message||"Couldn't parse — try manual entry.";
+      setError(m);
+      if(text.trim().startsWith("http"))logImportIssue(text.trim(),m);
+      if(onFail)onFail();
+    }
     finally{setLoading(false);setLoadMsg("");}
   }
 
@@ -2505,8 +2523,12 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onR
   const[signingIn,setSigningIn]=useState(false);
   const[cfg,setCfg]=useState(null);
   const[showDiag,setShowDiag]=useState(false);
+  const[importLog,setImportLog]=useState([]);
   const importRef=useRef(null);
   const fixing=!!fixProgress?.running;
+
+  // Refresh the import-failure log whenever the diagnostics panel is opened
+  useEffect(()=>{ if(showDiag){try{setImportLog(JSON.parse(localStorage.getItem("fnp_import_log")||"[]"));}catch{setImportLog([]);}} },[showDiag]);
 
   useEffect(()=>{ if(showDiag&&!cfg){
     fetch("/api/config-check").then(r=>r.json()).then(setCfg).catch(()=>setCfg({error:true}));
@@ -2736,6 +2758,25 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onR
                 ));
               })()}
               <div style={{fontSize:11,color:"var(--mist)",marginTop:8,lineHeight:1.5}}>Grey "off" is optional. Set keys in Vercel → Environment Variables, then redeploy.</div>
+              {/* Recent import failures — captures intermittent issues you may have missed */}
+              <div style={{marginTop:12,paddingTop:10,borderTop:"1px solid var(--parchment)"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                  <span style={{fontSize:12,fontWeight:700,color:"var(--charcoal)"}}>Recent import issues</span>
+                  {importLog.length>0&&<button onClick={()=>{try{localStorage.removeItem("fnp_import_log");}catch{}setImportLog([]);}} style={{background:"none",border:"none",fontSize:11,color:"var(--mist)",textDecoration:"underline",cursor:"pointer"}}>Clear</button>}
+                </div>
+                {importLog.length===0?(
+                  <div style={{fontSize:12,color:"var(--mist)"}}>None recorded 🎉</div>
+                ):importLog.map((e,i)=>{
+                  const d=new Date(e.t),when=`${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}`;
+                  return(
+                    <div key={i} style={{fontSize:11,color:"var(--charcoal)",padding:"5px 0",borderBottom:i<importLog.length-1?"1px solid var(--parchment)":"none"}}>
+                      <div style={{color:"var(--mist)"}}>{when}</div>
+                      <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.url}</div>
+                      <div style={{color:"#B45309"}}>{e.msg}</div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
           <div style={{marginTop:14,padding:"14px 16px",background:"var(--sage-pale)",borderRadius:"var(--r-md)",border:"1px solid var(--sage-lt)"}}>

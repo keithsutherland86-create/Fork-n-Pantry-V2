@@ -23,7 +23,11 @@ export async function POST(req) {
   if (!process.env.APIFY_TOKEN) return Response.json({ ok:false, reason:"no-apify-token" });
   const ap = await fetchViaApify(url, isInstagram, isTikTok);
   if (!ap) return Response.json({ ok:false, reason:"apify-error" });      // request failed / non-2xx
-  if (!ap.image) return Response.json({ ok:false, reason:"apify-no-image" }); // ran but no image field
+  if (!ap.image) {
+    // Ran but no image — surface Apify's own error, or the field names it did return
+    const detail = ap._err ? `apify: ${String(ap._err).slice(0,70)}` : `no-image [${ap._keys||""}]`.slice(0,140);
+    return Response.json({ ok:false, reason: detail });
+  }
 
   // 2. Re-host it to Supabase Storage so the CDN expiry never breaks the card
   const sbUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;

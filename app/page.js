@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.52";
+const APP_VERSION = "2.53";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.53", title:"Broader photo detection", items:[
+    "Recognise more Instagram/TikTok image formats (carousels, reels) so more photos upgrade",
+  ]},
   { v:"2.52", title:"Fix photo upgrade upload", items:[
     "Photo re-hosting now uses the Supabase SDK with upsert, fixing the upload rejection",
   ]},

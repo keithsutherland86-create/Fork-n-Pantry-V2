@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.46";
+const APP_VERSION = "2.47";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.47", title:"Upgrade photos on existing recipes", items:[
+    "'Fix all images' now also pulls sharper, permanent photos for your existing Instagram/TikTok recipes",
+  ]},
   { v:"2.46", title:"Sharper photos on Instagram recipes", items:[
     "After a quick import, a higher-resolution photo is fetched in the background and swapped in",
     "Imported photos are saved permanently so they never break when the original link expires",
@@ -3287,9 +3290,9 @@ function AppInner(){
     if(!session?.user?.id)return;
     const uid=session.user.id;
     let cur=r; // latest version, so each swap compares against the freshest image
-    const swapImage=(img)=>{
-      if(!img||img===cur.ogImage)return;
-      const updated={...cur,ogImage:img};cur=updated;
+    const swapImage=(img,enriched)=>{
+      if((!img||img===cur.ogImage)&&!enriched)return;
+      const updated={...cur,...(img?{ogImage:img}:{}),...(enriched?{imgEnriched:true}:{})};cur=updated;
       setRecipes(prev=>{const u=prev.map(x=>x.id===updated.id?updated:x);save(KEYS.r,u);return u;});
       cloudUpsert(updated,uid);
     };
@@ -3302,7 +3305,7 @@ function AppInner(){
           const res=await fetch("/api/enrich-image",{method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({url:r.url,recipeId:r.id,userId:uid})});
           const data=await res.json();
-          if(data.ok&&data.image){swapImage(data.image);if(data.permanent)return;}
+          if(data.ok&&data.image){swapImage(data.image,data.permanent);if(data.permanent)return;}
         }catch{}
       }
       // Fallback / non-social: re-host the current image so a CDN link never expires
@@ -3329,6 +3332,22 @@ function AppInner(){
     let fixed=0,failed=0,done=0,lastErr="";
     const total=recipes.length;
     for(const r of recipes){
+      const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(r.url||"");
+      // Social posts: upgrade to the full-res Apify image once (even if already hosted).
+      // imgEnriched guards against re-spending Apify credits on later repair runs.
+      if(isSocial&&!r.imgEnriched){
+        try{
+          const res=await fetch("/api/enrich-image",{method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({url:r.url,recipeId:r.id,userId:uid})});
+          const data=await res.json();
+          if(data.ok&&data.image&&data.permanent){
+            const updated={...r,ogImage:data.image,imgEnriched:true};
+            setRecipes(prev=>{const u=prev.map(x=>x.id===updated.id?updated:x);save(KEYS.r,u);return u;});
+            cloudUpsert(updated,uid);
+            fixed++;done++;onProgress&&onProgress(done,total);continue;
+          }
+        }catch{}
+      }
       // Already permanent — nothing to do
       if(r.ogImage&&r.ogImage.includes("supabase.co")){done++;onProgress&&onProgress(done,total);continue;}
       const onErr=msg=>{lastErr=msg;};

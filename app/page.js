@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.50";
+const APP_VERSION = "2.51";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.51", title:"Photo-upgrade diagnostics", items:[
+    "Fix Images now reports how many photo upgrades succeeded and why any failed",
+  ]},
   { v:"2.50", title:"Live progress for Fix Images", items:[
     "Fixing images now shows a progress bar and live tally of restored / already-OK / failed",
     "The run keeps going if you leave Settings, and re-running resumes where it left off",
@@ -2653,6 +2656,13 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onR
                         {(p.failed>0)&&<span style={{color:"#B91C1C",fontWeight:700}}>✗ {p.failed} failed</span>}
                       </div>
                       {p.running&&p.current&&<div style={{fontSize:11,color:"var(--mist)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Last: {p.current}</div>}
+                      {/* Photo-upgrade (Apify) diagnostics */}
+                      {p.enrichTried>0&&(
+                        <div style={{fontSize:11,color:"var(--mist)",marginTop:3}}>
+                          📸 Photo upgrades: {p.upgraded||0}/{p.enrichTried} succeeded
+                          {(p.upgraded||0)<p.enrichTried&&p.enrichReason&&<span style={{color:"#B45309"}}> — issue: {p.enrichReason}</span>}
+                        </div>
+                      )}
                       {!p.running&&p.failed>0&&p.lastErr&&<div style={{fontSize:11,color:"#B91C1C",marginTop:3}}>{p.lastErr}</div>}
                     </div>
                   );
@@ -3372,15 +3382,16 @@ function AppInner(){
   async function fixAllImages(onProgress){
     if(!session?.user?.id)return{fixed:0,failed:0,total:0};
     const uid=session.user.id;
-    let fixed=0,failed=0,skipped=0,done=0,lastErr="";
+    let fixed=0,failed=0,skipped=0,done=0,lastErr="",upgraded=0,enrichTried=0,enrichReason="";
     const total=recipes.length;
-    const report=current=>{done++;onProgress&&onProgress({done,total,fixed,failed,skipped,current});};
+    const report=current=>{done++;onProgress&&onProgress({done,total,fixed,failed,skipped,current,upgraded,enrichTried,enrichReason});};
     for(const r of recipes){
       const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(r.url||"");
       // Social posts: upgrade to the full-res Apify image once (even if already hosted).
       // imgEnriched guards against re-spending Apify credits on later repair runs.
       if(isSocial&&!r.imgEnriched){
         try{
+          enrichTried++;
           const res=await fetch("/api/enrich-image",{method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({url:r.url,recipeId:r.id,userId:uid})});
           const data=await res.json();
@@ -3388,9 +3399,10 @@ function AppInner(){
             const updated={...r,ogImage:data.image,imgEnriched:true};
             setRecipes(prev=>{const u=prev.map(x=>x.id===updated.id?updated:x);save(KEYS.r,u);return u;});
             cloudUpsert(updated,uid);
-            fixed++;report(r.title);continue;
+            fixed++;upgraded++;report(r.title);continue;
           }
-        }catch{}
+          if(data&&data.reason)enrichReason=data.reason;
+        }catch(e){enrichReason="request-failed";}
       }
       // Already permanent — nothing to do
       if(r.ogImage&&r.ogImage.includes("supabase.co")){skipped++;report(r.title);continue;}
@@ -3416,7 +3428,7 @@ function AppInner(){
       }
       report(r.title);
     }
-    return{fixed,failed,skipped,total,lastErr};
+    return{fixed,failed,skipped,total,lastErr,upgraded,enrichTried,enrichReason};
   }
 
   // App-level so the run survives leaving the Settings screen (SettingsTab unmounting).
@@ -3424,7 +3436,7 @@ function AppInner(){
     if(fixProgress?.running)return;
     setFixProgress({running:true,done:0,total:recipes.length,fixed:0,failed:0,skipped:0,current:""});
     const res=await fixAllImages(p=>setFixProgress({running:true,...p}));
-    setFixProgress({running:false,done:res.total,total:res.total,fixed:res.fixed,failed:res.failed,skipped:res.skipped,lastErr:res.lastErr});
+    setFixProgress({running:false,done:res.total,total:res.total,fixed:res.fixed,failed:res.failed,skipped:res.skipped,lastErr:res.lastErr,upgraded:res.upgraded,enrichTried:res.enrichTried,enrichReason:res.enrichReason});
   }
 
   function dismissWelcome(){

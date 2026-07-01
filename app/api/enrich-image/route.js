@@ -19,21 +19,21 @@ export async function POST(req) {
   if (!url || (!isInstagram && !isTikTok)) return Response.json({ ok:false });
 
   // 1. High-res image from the dedicated scraper
+  if (!process.env.APIFY_TOKEN) return Response.json({ ok:false, reason:"no-apify-token" });
   const ap = await fetchViaApify(url, isInstagram, isTikTok);
-  if (!ap?.image) return Response.json({ ok:false });
+  if (!ap) return Response.json({ ok:false, reason:"apify-error" });      // request failed / non-2xx
+  if (!ap.image) return Response.json({ ok:false, reason:"apify-no-image" }); // ran but no image field
 
   // 2. Re-host it to Supabase Storage so the CDN expiry never breaks the card
   const sbUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const svcKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!sbUrl || !svcKey) {
-    // No storage configured — hand back the raw high-res URL; better than the thumbnail,
-    // though it will eventually expire. (Set SUPABASE_SERVICE_ROLE_KEY to make it permanent.)
-    return Response.json({ ok:true, image: ap.image, permanent:false });
+    return Response.json({ ok:true, image: ap.image, permanent:false, reason:"no-storage-key" });
   }
 
   try {
     const imgRes = await fetch(ap.image, { signal: AbortSignal.timeout(15000) });
-    if (!imgRes.ok) return Response.json({ ok:true, image: ap.image, permanent:false });
+    if (!imgRes.ok) return Response.json({ ok:true, image: ap.image, permanent:false, reason:`img-fetch-${imgRes.status}` });
     const contentType = imgRes.headers.get("content-type") || "image/jpeg";
     const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
     const buf = await imgRes.arrayBuffer();
@@ -45,13 +45,14 @@ export async function POST(req) {
       body: buf,
     });
     if (!up.ok) {
-      console.error("Supabase upload failed:", up.status, await up.text().catch(()=>"" ));
-      return Response.json({ ok:true, image: ap.image, permanent:false });
+      const detail = await up.text().catch(()=>"" );
+      console.error("Supabase upload failed:", up.status, detail);
+      return Response.json({ ok:true, image: ap.image, permanent:false, reason:`upload-${up.status}` });
     }
     const publicUrl = `${sbUrl}/storage/v1/object/public/recipe-images/${path}`;
     return Response.json({ ok:true, image: publicUrl, permanent:true });
   } catch (e) {
     console.error("enrich-image rehost failed:", e?.message);
-    return Response.json({ ok:true, image: ap.image, permanent:false });
+    return Response.json({ ok:true, image: ap.image, permanent:false, reason:"rehost-exception" });
   }
 }

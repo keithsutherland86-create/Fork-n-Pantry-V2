@@ -1,5 +1,9 @@
 import { fetchViaApify } from "../../../lib/social";
 
+// The robust (Apify) path can cold-start slowly; raise the serverless timeout so it isn't
+// killed mid-request on the escalated social import.
+export const maxDuration = 60;
+
 // Pull og:image, og:title and a clean recipe text summary (from JSON-LD if present) out of a page's HTML
 function extractFromHtml(html, fallbackTitle = "") {
   let ogImage = "", ogTitle = fallbackTitle, pageText = "", hasRecipeLd = false;

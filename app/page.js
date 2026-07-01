@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.48";
+const APP_VERSION = "2.49";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.49", title:"Fix slow image upgrades timing out", items:[
+    "Raised the import timeout so the slower high-res photo fetch isn't cut off partway",
+  ]},
   { v:"2.48", title:"Import services status check", items:[
     "Settings → Import services shows at a glance which import/hosting keys are connected",
   ]},

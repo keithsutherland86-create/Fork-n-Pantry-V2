@@ -1,5 +1,9 @@
 import { fetchViaApify } from "../../../lib/social";
 
+// Apify cold-starts can take 20-40s; the default serverless timeout would kill the request
+// before it responds. Allow up to 60s.
+export const maxDuration = 60;
+
 // Background image upgrade for social imports. Microlink gives a quick low-res thumbnail on
 // the initial parse; this endpoint fetches the full-resolution image via Apify and re-hosts
 // it to Supabase Storage server-side (browsers can't fetch Instagram CDN URLs — CORS).

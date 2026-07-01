@@ -73,6 +73,45 @@ function findRecipeLinkInText(text) {
   return "";
 }
 
+// Dedicated social scraper (Apify) — the robust path for Instagram/TikTok, which block
+// anonymous access. Inert unless APIFY_TOKEN is set, so the app runs unchanged without a key.
+// Actor IDs are overridable via env vars; defaults are the popular maintained actors.
+//   APIFY_TOKEN        — your Apify API token (required to enable this path)
+//   APIFY_IG_ACTOR     — Instagram actor id (default apify~instagram-scraper)
+//   APIFY_TIKTOK_ACTOR — TikTok actor id   (default clockworks~tiktok-scraper)
+async function fetchViaApify(url, isInstagram, isTikTok) {
+  const token = process.env.APIFY_TOKEN;
+  if (!token) return null;
+  let actor, input;
+  if (isInstagram) {
+    actor = process.env.APIFY_IG_ACTOR || "apify~instagram-scraper";
+    input = { directUrls: [url], resultsType: "posts", resultsLimit: 1, addParentData: false };
+  } else if (isTikTok) {
+    actor = process.env.APIFY_TIKTOK_ACTOR || "clockworks~tiktok-scraper";
+    input = { postURLs: [url], resultsPerPage: 1, shouldDownloadVideos: false, shouldDownloadCovers: false };
+  } else return null;
+  try {
+    // run-sync-get-dataset-items runs the actor and returns its output rows in one call
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&timeout=60`,
+      { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(input), signal: AbortSignal.timeout(50000) }
+    );
+    if (!res.ok) { console.error("Apify error:", res.status, await res.text().catch(()=>"" )); return null; }
+    const items = await res.json();
+    const it = Array.isArray(items) ? items[0] : null;
+    if (!it) return null;
+    // Normalise field names across the two actors
+    const caption = it.caption || it.text || it.description || "";
+    const image =
+      it.displayUrl || it.imageUrl ||
+      it.videoMeta?.coverUrl || it.videoMeta?.originalCoverUrl ||
+      (Array.isArray(it.covers) ? it.covers[0] : "") ||
+      (Array.isArray(it.images) ? it.images[0] : "") || "";
+    const title = it.ownerFullName || it.ownerUsername || it.authorMeta?.name || it.authorMeta?.nickName || "";
+    return { caption, image, title };
+  } catch (e) { console.error("Apify fetch failed:", e?.message); return null; }
+}
+
 async function fetchHtml(url, timeout = 7000) {
   const agents = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1",
@@ -124,20 +163,30 @@ export async function POST(req) {
     const isInstagram = /instagram\.com\/(p|reel|tv)\//i.test(input);
     const isTikTok = /tiktok\.com\/@[^/]+\/video\//i.test(input);
     if (isInstagram || isTikTok) {
-      try {
-        const oEmbedUrl = isInstagram
-          ? `https://api.instagram.com/oembed/?url=${encodeURIComponent(input)}&maxwidth=400`
-          : `https://www.tiktok.com/oembed?url=${encodeURIComponent(input)}`;
-        const oRes = await fetch(oEmbedUrl, { signal: AbortSignal.timeout(5000) });
-        if (oRes.ok) {
-          const oData = await oRes.json();
-          // caption / title is typically in oData.title — strip leading username
-          caption = (oData.title || "").replace(/^@[\w.]+:\s*/,"");
-          if (caption) pageText = caption;
-          if (oData.thumbnail_url) ogImage = oData.thumbnail_url;
-          ogTitle = oData.title || "";
-        }
-      } catch {}
+      // ── Preferred: dedicated scraper (Apify). Inert unless APIFY_TOKEN is set. ──
+      const ap = await fetchViaApify(input, isInstagram, isTikTok);
+      if (ap) {
+        if (ap.caption) { caption = ap.caption; pageText = caption; }
+        if (ap.image && !ogImage) ogImage = ap.image;
+        if (ap.title && !ogTitle) ogTitle = ap.title;
+      }
+      // ── Fallback: public oEmbed (deprecated for IG, but harmless & free to try) ──
+      if (!caption) {
+        try {
+          const oEmbedUrl = isInstagram
+            ? `https://api.instagram.com/oembed/?url=${encodeURIComponent(input)}&maxwidth=400`
+            : `https://www.tiktok.com/oembed?url=${encodeURIComponent(input)}`;
+          const oRes = await fetch(oEmbedUrl, { signal: AbortSignal.timeout(5000) });
+          if (oRes.ok) {
+            const oData = await oRes.json();
+            // caption / title is typically in oData.title — strip leading username
+            caption = (oData.title || "").replace(/^@[\w.]+:\s*/,"");
+            if (caption) pageText = caption;
+            if (oData.thumbnail_url && !ogImage) ogImage = oData.thumbnail_url;
+            ogTitle = ogTitle || oData.title || "";
+          }
+        } catch {}
+      }
     }
   }
 

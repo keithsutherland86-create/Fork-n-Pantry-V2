@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.42";
+const APP_VERSION = "2.43";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.43", title:"Robust social import backbone", items:[
+    "Instagram/TikTok imports can now use a dedicated scraper for much higher reliability",
+  ]},
   { v:"2.42", title:"Better Instagram/TikTok imports", items:[
     "Social links now read the caption via a headless browser instead of hitting a login wall",
     "If a caption still can't be read, paste the post's caption text instead of the link",

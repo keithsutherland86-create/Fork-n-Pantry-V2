@@ -5,10 +5,14 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.45";
+const APP_VERSION = "2.46";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.46", title:"Sharper photos on Instagram recipes", items:[
+    "After a quick import, a higher-resolution photo is fetched in the background and swapped in",
+    "Imported photos are saved permanently so they never break when the original link expires",
+  ]},
   { v:"2.45", title:"Quieter import wait message", items:[
     "The 'taking longer' notice now only appears if an import is genuinely slow, not on every quick retry",
   ]},
@@ -3276,19 +3280,37 @@ function AppInner(){
   },[tab]);
 
   function addRecipe(r){
-    // Save immediately so the UI responds instantly
+    // Save immediately so the UI responds instantly (Microlink's quick image shows first)
     setRecipes(prev=>{const u=[r,...prev.filter(x=>x.id!==r.id)];save(KEYS.r,u);return u;});
     if(session)cloudUpsert(r,session.user.id).then(()=>setSyncStatus("synced"));
     showToast("success",r,`"${r.title||"Recipe"}" saved`);
-    // Background: upload image to Supabase Storage so it never expires
-    if(session?.user?.id&&r.ogImage){
-      storeImagePermanently(r.ogImage,r.id,session.user.id).then(stored=>{
-        if(stored===r.ogImage)return;
-        const updated={...r,ogImage:stored};
-        setRecipes(prev=>{const u=prev.map(x=>x.id===r.id?updated:x);save(KEYS.r,u);return u;});
-        cloudUpsert(updated,session.user.id);
-      });
-    }
+    if(!session?.user?.id)return;
+    const uid=session.user.id;
+    let cur=r; // latest version, so each swap compares against the freshest image
+    const swapImage=(img)=>{
+      if(!img||img===cur.ogImage)return;
+      const updated={...cur,ogImage:img};cur=updated;
+      setRecipes(prev=>{const u=prev.map(x=>x.id===updated.id?updated:x);save(KEYS.r,u);return u;});
+      cloudUpsert(updated,uid);
+    };
+    const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(r.url||"");
+    (async()=>{
+      // Social posts: fetch a full-res image via Apify + permanent re-host (server-side,
+      // avoids the browser CORS block on Instagram CDN), then swap it in when ready.
+      if(isSocial){
+        try{
+          const res=await fetch("/api/enrich-image",{method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({url:r.url,recipeId:r.id,userId:uid})});
+          const data=await res.json();
+          if(data.ok&&data.image){swapImage(data.image);if(data.permanent)return;}
+        }catch{}
+      }
+      // Fallback / non-social: re-host the current image so a CDN link never expires
+      if(cur.ogImage){
+        const stored=await storeImagePermanently(cur.ogImage,r.id,uid);
+        swapImage(stored);
+      }
+    })();
   }
   function deleteRecipe(id){
     const u=recipes.filter(r=>r.id!==id);setRecipes(u);save(KEYS.r,u);

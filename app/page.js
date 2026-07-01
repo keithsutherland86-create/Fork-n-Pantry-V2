@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.56";
+const APP_VERSION = "2.57";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.57", title:"Force re-upgrade photos", items:[
+    "New 'Force re-upgrade' option re-fetches fresh photos for all Instagram/TikTok recipes",
+  ]},
   { v:"2.56", title:"More Instagram/TikTok links can upgrade photos", items:[
     "Photo upgrade now accepts all Instagram/TikTok link formats (reels, share links, short links)",
   ]},
@@ -2683,9 +2686,12 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onR
                   );
                 })()}
               </div>
-              <button onClick={onRunFix} disabled={fixing||!recipes.length} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:fixing?"wait":"pointer",color:"var(--moss)",opacity:(fixing||!recipes.length)?.6:1,flexShrink:0,whiteSpace:"nowrap"}}>
-                {fixing?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span> Fixing…</>:(fixProgress&&!fixProgress.running?"🖼 Run again":"🖼 Fix Images")}
-              </button>
+              <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+                <button onClick={()=>onRunFix(false)} disabled={fixing||!recipes.length} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:fixing?"wait":"pointer",color:"var(--moss)",opacity:(fixing||!recipes.length)?.6:1,whiteSpace:"nowrap"}}>
+                  {fixing?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span> Fixing…</>:(fixProgress&&!fixProgress.running?"🖼 Run again":"🖼 Fix Images")}
+                </button>
+                {!fixing&&<button onClick={()=>{if(confirm("Re-fetch fresh photos for ALL Instagram/TikTok recipes? Uses a little Apify credit."))onRunFix(true);}} disabled={!recipes.length} style={{background:"none",border:"none",fontSize:11,color:"var(--mist)",textDecoration:"underline",cursor:"pointer",whiteSpace:"nowrap"}}>Force re-upgrade</button>}
+              </div>
             </div>
           )}
         </div>
@@ -3394,7 +3400,7 @@ function AppInner(){
   // Supabase copies, and upgrade social recipes to full-res Apify photos. onProgress is called
   // after each recipe with {done,total,fixed,failed,skipped,current}. Resumable: already-done
   // recipes are skipped, so re-running continues where an interrupted run left off.
-  async function fixAllImages(onProgress){
+  async function fixAllImages(onProgress,force){
     if(!session?.user?.id)return{fixed:0,failed:0,total:0};
     const uid=session.user.id;
     let fixed=0,failed=0,skipped=0,done=0,lastErr="",upgraded=0,enrichTried=0,enrichReason="";
@@ -3403,8 +3409,9 @@ function AppInner(){
     for(const r of recipes){
       const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(r.url||"");
       // Social posts: upgrade to the full-res Apify image once (even if already hosted).
-      // imgEnriched guards against re-spending Apify credits on later repair runs.
-      if(isSocial&&!r.imgEnriched){
+      // imgEnriched guards against re-spending Apify credits on later repair runs;
+      // force re-attempts regardless (used to redo images from earlier buggy runs).
+      if(isSocial&&(force||!r.imgEnriched)){
         try{
           enrichTried++;
           const res=await fetch("/api/enrich-image",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -3447,10 +3454,10 @@ function AppInner(){
   }
 
   // App-level so the run survives leaving the Settings screen (SettingsTab unmounting).
-  async function runFixImages(){
+  async function runFixImages(force){
     if(fixProgress?.running)return;
     setFixProgress({running:true,done:0,total:recipes.length,fixed:0,failed:0,skipped:0,current:""});
-    const res=await fixAllImages(p=>setFixProgress({running:true,...p}));
+    const res=await fixAllImages(p=>setFixProgress({running:true,...p}),force);
     setFixProgress({running:false,done:res.total,total:res.total,fixed:res.fixed,failed:res.failed,skipped:res.skipped,lastErr:res.lastErr,upgraded:res.upgraded,enrichTried:res.enrichTried,enrichReason:res.enrichReason});
   }
 

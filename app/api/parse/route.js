@@ -171,8 +171,15 @@ export async function POST(req) {
       }
     }
 
-    // ── Step 2: Microlink (headless browser — always run in deep mode, otherwise fallback) ──
-    if (!ogImage || isDeep) {
+    // For social posts the HTML fetch only ever returns a login wall, so any pageText we
+    // extracted from it is junk. Unless oEmbed gave us a real caption, drop it so Microlink's
+    // headless-browser description (which usually contains the caption) can take over.
+    const haveRealRecipeText = /INGREDIENTS:/.test(pageText) || !!caption;
+    if (isSocial && !haveRealRecipeText) pageText = "";
+
+    // ── Step 2: Microlink (headless browser — run in deep mode, when we lack an image,
+    //    or for social posts where we still have no usable recipe text) ──
+    if (!ogImage || isDeep || (isSocial && !pageText)) {
       try {
         const mlKey = process.env.MICROLINK_API_KEY;
         const mlUrl = `https://api.microlink.io?url=${encodeURIComponent(input)}${mlKey ? `&apiKey=${mlKey}` : ""}`;

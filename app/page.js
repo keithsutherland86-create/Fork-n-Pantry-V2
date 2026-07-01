@@ -5,10 +5,14 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.41";
+const APP_VERSION = "2.42";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.42", title:"Better Instagram/TikTok imports", items:[
+    "Social links now read the caption via a headless browser instead of hitting a login wall",
+    "If a caption still can't be read, paste the post's caption text instead of the link",
+  ]},
   { v:"2.41", title:"Clear voice readout — mic fully releases first", items:[
     "Step readouts wait for the microphone to fully turn off before speaking, removing the echo-cancellation distortion",
   ]},

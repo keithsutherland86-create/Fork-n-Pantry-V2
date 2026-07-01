@@ -5,10 +5,14 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.49";
+const APP_VERSION = "2.50";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.50", title:"Live progress for Fix Images", items:[
+    "Fixing images now shows a progress bar and live tally of restored / already-OK / failed",
+    "The run keeps going if you leave Settings, and re-running resumes where it left off",
+  ]},
   { v:"2.49", title:"Fix slow image upgrades timing out", items:[
     "Raised the import timeout so the slower high-res photo fetch isn't cut off partway",
   ]},
@@ -2470,40 +2474,19 @@ function GroceryTab(){
 }
 
 // ─── SETTINGS TAB ─────────────────────────────────────────────────────────────
-function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onFixImages,onWhatsNew}){
+function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onRunFix,fixProgress,onWhatsNew}){
   const[dark,setDark]=useState(()=>{try{return localStorage.getItem(KEYS.t)==="dark";}catch{return false;}});
   const[wakeLock,setWakeLock]=useState(()=>{try{return localStorage.getItem("fnp_wakelock")!=="off";}catch{return true;}});
   const[wakePhrase,setWakePhrase]=useState(()=>{try{return localStorage.getItem("fnp_wakephrase")||"";}catch{return "";}});
   const[signingIn,setSigningIn]=useState(false);
-  const[fixing,setFixing]=useState(false);
-  const[fixMsg,setFixMsg]=useState("");
   const[cfg,setCfg]=useState(null);
   const[showDiag,setShowDiag]=useState(false);
   const importRef=useRef(null);
+  const fixing=!!fixProgress?.running;
 
   useEffect(()=>{ if(showDiag&&!cfg){
     fetch("/api/config-check").then(r=>r.json()).then(setCfg).catch(()=>setCfg({error:true}));
   }},[showDiag,cfg]);
-
-  async function handleFixImages(){
-    if(!onFixImages||fixing)return;
-    setFixing(true);setFixMsg("Checking images…");
-    try{
-      const{fixed,failed,total,lastErr}=await onFixImages((done,tot)=>setFixMsg(`Checking ${done}/${tot}…`));
-      const parts=[];
-      if(fixed)parts.push(`${fixed} restored`);
-      if(failed)parts.push(`${failed} couldn't be recovered`);
-      if(fixed){
-        setFixMsg(`✓ ${parts.join(", ")}`);
-      } else if(failed){
-        // Nothing restored — surface why (e.g. missing Storage bucket) so it's fixable
-        setFixMsg(`✗ ${failed} couldn't be recovered${lastErr?` — ${lastErr}`:""}`);
-      } else {
-        setFixMsg("✓ All images already up to date");
-      }
-    }catch(e){setFixMsg("✗ "+(e.message||"Failed"));}
-    setFixing(false);
-  }
 
   function exportRecipes(){
     const blob=new Blob([JSON.stringify(recipes,null,2)],{type:"application/json"});
@@ -2649,14 +2632,34 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
             <button onClick={()=>importRef.current?.click()} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>⬆ Import</button>
           </div>
           {session&&(
-            <div style={row}>
+            <div style={{...row,alignItems:"flex-start"}}>
               <div style={{flex:1}}>
                 <div style={label}>Fix Recipe Images</div>
-                <div style={sub}>Re-download and permanently store images for recipes whose photos have stopped loading</div>
-                {fixMsg&&<div style={{fontSize:12,marginTop:4,color:fixMsg.startsWith("✓")?"var(--moss)":fixMsg.startsWith("✗")?"#991B1B":"var(--mist)"}}>{fixMsg}</div>}
+                <div style={sub}>Re-download &amp; permanently store photos, and pull sharper images for Instagram/TikTok recipes</div>
+                {fixProgress&&(()=>{
+                  const p=fixProgress,pct=p.total?Math.round((p.done/p.total)*100):0;
+                  return(
+                    <div style={{marginTop:8}}>
+                      {/* progress bar */}
+                      <div style={{height:6,borderRadius:4,background:"var(--parchment)",overflow:"hidden",marginBottom:6}}>
+                        <div style={{height:"100%",width:`${pct}%`,background:"var(--moss)",transition:"width .3s"}}/>
+                      </div>
+                      <div style={{fontSize:12,color:"var(--charcoal)",fontWeight:600}}>
+                        {p.running?`Checking ${p.done}/${p.total}…`:`Done — checked ${p.total}`}
+                      </div>
+                      <div style={{display:"flex",gap:12,marginTop:3,fontSize:12,flexWrap:"wrap"}}>
+                        <span style={{color:"#15803D",fontWeight:700}}>✓ {p.fixed||0} restored</span>
+                        <span style={{color:"var(--mist)"}}>— {p.skipped||0} already OK</span>
+                        {(p.failed>0)&&<span style={{color:"#B91C1C",fontWeight:700}}>✗ {p.failed} failed</span>}
+                      </div>
+                      {p.running&&p.current&&<div style={{fontSize:11,color:"var(--mist)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Last: {p.current}</div>}
+                      {!p.running&&p.failed>0&&p.lastErr&&<div style={{fontSize:11,color:"#B91C1C",marginTop:3}}>{p.lastErr}</div>}
+                    </div>
+                  );
+                })()}
               </div>
-              <button onClick={handleFixImages} disabled={fixing||!recipes.length} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:fixing?"wait":"pointer",color:"var(--moss)",opacity:(fixing||!recipes.length)?.6:1,flexShrink:0,whiteSpace:"nowrap"}}>
-                {fixing?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span> Fixing…</>:"🖼 Fix Images"}
+              <button onClick={onRunFix} disabled={fixing||!recipes.length} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:fixing?"wait":"pointer",color:"var(--moss)",opacity:(fixing||!recipes.length)?.6:1,flexShrink:0,whiteSpace:"nowrap"}}>
+                {fixing?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span> Fixing…</>:(fixProgress&&!fixProgress.running?"🖼 Run again":"🖼 Fix Images")}
               </button>
             </div>
           )}
@@ -3201,6 +3204,7 @@ function AppInner(){
   const[globalModalRecipe,setGlobalModalRecipe]=useState(null);
   const[session,setSession]=useState(null);
   const[syncStatus,setSyncStatus]=useState("idle");
+  const[fixProgress,setFixProgress]=useState(null);
   const[sharedBooks,setSharedBooks]=useState([]);
   const[joinPreview,setJoinPreview]=useState(null);
   const[welcomed,setWelcomed]=useState(true); // true = skip screen until we check storage
@@ -3361,13 +3365,16 @@ function AppInner(){
     if(session)cloudUpsert(r,session.user.id).then(()=>setSyncStatus("synced"));
   }
 
-  // Re-store images for already-saved recipes so expired CDN links get replaced with permanent Supabase copies.
-  // Returns {fixed, failed, total}. onProgress(done,total) is called as each recipe completes.
+  // Re-store images for already-saved recipes so expired CDN links get replaced with permanent
+  // Supabase copies, and upgrade social recipes to full-res Apify photos. onProgress is called
+  // after each recipe with {done,total,fixed,failed,skipped,current}. Resumable: already-done
+  // recipes are skipped, so re-running continues where an interrupted run left off.
   async function fixAllImages(onProgress){
     if(!session?.user?.id)return{fixed:0,failed:0,total:0};
     const uid=session.user.id;
-    let fixed=0,failed=0,done=0,lastErr="";
+    let fixed=0,failed=0,skipped=0,done=0,lastErr="";
     const total=recipes.length;
+    const report=current=>{done++;onProgress&&onProgress({done,total,fixed,failed,skipped,current});};
     for(const r of recipes){
       const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(r.url||"");
       // Social posts: upgrade to the full-res Apify image once (even if already hosted).
@@ -3381,12 +3388,12 @@ function AppInner(){
             const updated={...r,ogImage:data.image,imgEnriched:true};
             setRecipes(prev=>{const u=prev.map(x=>x.id===updated.id?updated:x);save(KEYS.r,u);return u;});
             cloudUpsert(updated,uid);
-            fixed++;done++;onProgress&&onProgress(done,total);continue;
+            fixed++;report(r.title);continue;
           }
         }catch{}
       }
       // Already permanent — nothing to do
-      if(r.ogImage&&r.ogImage.includes("supabase.co")){done++;onProgress&&onProgress(done,total);continue;}
+      if(r.ogImage&&r.ogImage.includes("supabase.co")){skipped++;report(r.title);continue;}
       const onErr=msg=>{lastErr=msg;};
       let stored=r.ogImage?await storeImagePermanently(r.ogImage,r.id,uid,onErr):"";
       // If the current URL was dead (still not on supabase) try re-parsing the source for a fresh image
@@ -3404,10 +3411,20 @@ function AppInner(){
         fixed++;
       } else if(r.ogImage&&!r.ogImage.includes("supabase.co")){
         failed++;
+      } else {
+        skipped++;
       }
-      done++;onProgress&&onProgress(done,total);
+      report(r.title);
     }
-    return{fixed,failed,total,lastErr};
+    return{fixed,failed,skipped,total,lastErr};
+  }
+
+  // App-level so the run survives leaving the Settings screen (SettingsTab unmounting).
+  async function runFixImages(){
+    if(fixProgress?.running)return;
+    setFixProgress({running:true,done:0,total:recipes.length,fixed:0,failed:0,skipped:0,current:""});
+    const res=await fixAllImages(p=>setFixProgress({running:true,...p}));
+    setFixProgress({running:false,done:res.total,total:res.total,fixed:res.fixed,failed:res.failed,skipped:res.skipped,lastErr:res.lastErr});
   }
 
   function dismissWelcome(){
@@ -3470,7 +3487,7 @@ function AppInner(){
       {tab==="planner"&&<PlannerTab recipes={recipes} planner={planner} setPlanner={setPlanner} onUpdate={updateRecipe}/>}
       {tab==="scan"&&<ScanTab recipes={recipes} onOpenRecipe={r=>setSelectedRecipeGlobal(r)}/>}
       {tab==="grocery"&&<GroceryTab/>}
-      {tab==="settings"&&<SettingsTab session={session} onSignIn={handleSignIn} onSignOut={handleSignOut} syncStatus={syncStatus} recipes={recipes} onImport={rs=>{const merged=[...rs.filter(r=>!recipes.find(x=>x.id===r.id)),...recipes];setRecipes(merged);save(KEYS.r,merged);}} onFixImages={fixAllImages} onWhatsNew={()=>setShowWhatsNew(true)}/>}
+      {tab==="settings"&&<SettingsTab session={session} onSignIn={handleSignIn} onSignOut={handleSignOut} syncStatus={syncStatus} recipes={recipes} onImport={rs=>{const merged=[...rs.filter(r=>!recipes.find(x=>x.id===r.id)),...recipes];setRecipes(merged);save(KEYS.r,merged);}} onRunFix={runFixImages} fixProgress={fixProgress} onWhatsNew={()=>setShowWhatsNew(true)}/>}
       <TabBar tab={tab} setTab={setTab}/>
       {backToast&&(
         <div style={{position:"fixed",bottom:90,left:"50%",transform:"translateX(-50%)",background:"rgba(15,24,17,.88)",color:"#fff",borderRadius:24,padding:"10px 20px",fontSize:13,fontWeight:600,zIndex:500,pointerEvents:"none",backdropFilter:"blur(8px)",whiteSpace:"nowrap",boxShadow:"0 4px 16px rgba(0,0,0,.3)"}}>

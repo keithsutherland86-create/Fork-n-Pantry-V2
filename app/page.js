@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.57";
+const APP_VERSION = "2.58";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.58", title:"Import shows why a social fetch failed", items:[
+    "Failed Instagram/TikTok imports now show the underlying reason to help diagnose issues",
+  ]},
   { v:"2.57", title:"Force re-upgrade photos", items:[
     "New 'Force re-upgrade' option re-fetches fresh photos for all Instagram/TikTok recipes",
   ]},

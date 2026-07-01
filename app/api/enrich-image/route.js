@@ -23,9 +23,8 @@ export async function POST(req) {
   if (!url || (!isInstagram && !isTikTok)) return Response.json({ ok:false, reason:"not-a-supported-link" });
 
   // 1. High-res image from the dedicated scraper
-  if (!process.env.APIFY_TOKEN) return Response.json({ ok:false, reason:"no-apify-token" });
   const ap = await fetchViaApify(url, isInstagram, isTikTok);
-  if (!ap) return Response.json({ ok:false, reason:"apify-error" });      // request failed / non-2xx
+  if (!ap.ok) return Response.json({ ok:false, reason: ap.reason || "apify-failed" });
   if (!ap.image) {
     // Ran but no image — surface Apify's own error, or the field names it did return
     const detail = ap._err ? `apify: ${String(ap._err).slice(0,70)}` : `no-image [${ap._keys||""}]`.slice(0,140);

@@ -123,7 +123,7 @@ export async function POST(req) {
 
   const isUrl = input.trim().startsWith("http");
   const isSocial = /(instagram\.com|tiktok\.com|facebook\.com|fb\.watch)/i.test(input);
-  let pageText = "", ogImage = "", ogTitle = "", caption = "";
+  let pageText = "", ogImage = "", ogTitle = "", caption = "", apifyReason = "";
 
   // ── oEmbed for Instagram / TikTok — gets caption text without auth ────────────
   if (isUrl) {
@@ -134,10 +134,12 @@ export async function POST(req) {
       //    client escalates (robust:true) after the quick methods failed. Inert without a key.
       if (robust) {
         const ap = await fetchViaApify(input, isInstagram, isTikTok);
-        if (ap) {
+        if (ap.ok) {
           if (ap.caption) { caption = ap.caption; pageText = caption; }
           if (ap.image && !ogImage) ogImage = ap.image;
           if (ap.title && !ogTitle) ogTitle = ap.title;
+        } else {
+          apifyReason = ap.reason || "";
         }
       }
       // ── Quick + free: public oEmbed (deprecated for IG, but harmless & fast to try) ──
@@ -282,10 +284,11 @@ Dig deeper into the content below. Infer and reconstruct ingredients and steps f
   // No text came back (e.g. only a non-text block, or hit max_tokens before any output)
   if(!text.trim()){
     console.error("Claude returned no text. stop_reason:", data.stop_reason, "content:", JSON.stringify(data.content));
+    const suffix = (robust && apifyReason) ? ` [${apifyReason}]` : "";
     const msg = isSocial
-      ? "Instagram/TikTok didn't share this post's caption. Open the post, copy its full caption text, and paste that here instead of the link."
+      ? "Instagram/TikTok didn't share this post's caption. Open the post, copy its full caption text, and paste that here instead of the link." + suffix
       : `No recipe text returned (${data.stop_reason||"empty"})`;
-    return Response.json({ ok:false, error: msg }, { status:422 });
+    return Response.json({ ok:false, error: msg, apifyReason }, { status:422 });
   }
 
   try {
@@ -293,10 +296,11 @@ Dig deeper into the content below. Infer and reconstruct ingredients and steps f
     // Guard against a successful-but-empty result becoming a blank "Untitled" card
     const hasContent = parsed && (parsed.title || (parsed.ingredients||[]).length || (parsed.steps||[]).length);
     if(!hasContent){
+      const suffix = (robust && apifyReason) ? ` [${apifyReason}]` : "";
       const msg = isSocial
-        ? "Instagram/TikTok didn't share this post's caption. Open the post, copy its full caption text, and paste that here instead of the link."
+        ? "Instagram/TikTok didn't share this post's caption. Open the post, copy its full caption text, and paste that here instead of the link." + suffix
         : "Couldn't extract a recipe from that — try a different link or manual entry.";
-      return Response.json({ ok:false, error: msg }, { status:422 });
+      return Response.json({ ok:false, error: msg, apifyReason }, { status:422 });
     }
 
     let finalImage = ogImage;

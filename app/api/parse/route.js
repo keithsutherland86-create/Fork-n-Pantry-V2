@@ -129,7 +129,7 @@ async function fetchHtml(url, timeout = 7000) {
 
 export async function POST(req) {
   const body = await req.json();
-  const { input = "", imageBase64 = "", imageMediaType = "image/jpeg", mode = "", existing = null } = body;
+  const { input = "", imageBase64 = "", imageMediaType = "image/jpeg", mode = "", existing = null, robust = false } = body;
   const isDeep = mode === "deep";
 
   // ── Nutrition scan mode ───────────────────────────────────────────────────────
@@ -163,14 +163,17 @@ export async function POST(req) {
     const isInstagram = /instagram\.com\/(p|reel|tv)\//i.test(input);
     const isTikTok = /tiktok\.com\/@[^/]+\/video\//i.test(input);
     if (isInstagram || isTikTok) {
-      // ── Preferred: dedicated scraper (Apify). Inert unless APIFY_TOKEN is set. ──
-      const ap = await fetchViaApify(input, isInstagram, isTikTok);
-      if (ap) {
-        if (ap.caption) { caption = ap.caption; pageText = caption; }
-        if (ap.image && !ogImage) ogImage = ap.image;
-        if (ap.title && !ogTitle) ogTitle = ap.title;
+      // ── Robust tier: dedicated scraper (Apify). Slow cold-start, so only run when the
+      //    client escalates (robust:true) after the quick methods failed. Inert without a key.
+      if (robust) {
+        const ap = await fetchViaApify(input, isInstagram, isTikTok);
+        if (ap) {
+          if (ap.caption) { caption = ap.caption; pageText = caption; }
+          if (ap.image && !ogImage) ogImage = ap.image;
+          if (ap.title && !ogTitle) ogTitle = ap.title;
+        }
       }
-      // ── Fallback: public oEmbed (deprecated for IG, but harmless & free to try) ──
+      // ── Quick + free: public oEmbed (deprecated for IG, but harmless & fast to try) ──
       if (!caption) {
         try {
           const oEmbedUrl = isInstagram

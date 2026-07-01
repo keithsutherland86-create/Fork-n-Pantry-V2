@@ -5,10 +5,14 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.43";
+const APP_VERSION = "2.44";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.44", title:"Faster imports, robust fallback", items:[
+    "Imports try the quick method first; only escalates to the slower deep fetch if needed",
+    "A clear message now shows when an Instagram import is taking the longer route",
+  ]},
   { v:"2.43", title:"Robust social import backbone", items:[
     "Instagram/TikTok imports can now use a dedicated scraper for much higher reliability",
   ]},
@@ -1242,6 +1246,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
   const[tab,setTab]=useState(prefill?"paste":"paste");
   const[input,setInput]=useState(prefill);
   const[loading,setLoading]=useState(false);
+  const[loadMsg,setLoadMsg]=useState("");
   const[error,setError]=useState("");
   const[dupWarning,setDupWarning]=useState(null);
   const[listening,setListening]=useState(false);
@@ -1260,17 +1265,28 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
     return recipes.find(r=>r.url&&norm(r.url)===norm(text.trim()))||null;
   }
 
+  function callParse(text,imageBase64,imageMediaType,robust){
+    return fetch("/api/parse",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({input:text,imageBase64,imageMediaType,robust})}).then(r=>r.json());
+  }
+
   async function parseAndSave({text="",imageBase64="",imageMediaType="image/jpeg",force=false}){
     if(!force&&text.trim().startsWith("http")){
       const dup=checkDuplicate(text);
       if(dup){setDupWarning(dup);return;}
     }
     setDupWarning(null);
-    setLoading(true);setError("");
+    setLoading(true);setError("");setLoadMsg("");
     try{
-      const body={input:text,imageBase64,imageMediaType};
-      const res=await fetch("/api/parse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-      const data=await res.json();
+      // Phase 1 — quick methods (fast: oEmbed / page HTML / Microlink)
+      let data=await callParse(text,imageBase64,imageMediaType,false);
+      // Phase 2 — if a social link failed the quick way, escalate to the robust scraper.
+      // It's slower (cold start), so warn the user why the wait is longer.
+      const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(text);
+      if(!data.ok && isSocial && text.trim().startsWith("http")){
+        setLoadMsg("This one's from Instagram — grabbing the full post. This can take up to a minute…");
+        data=await callParse(text,imageBase64,imageMediaType,true);
+      }
       if(!data.ok)throw new Error(data.error||"Couldn't parse — try manual entry.");
       const r=data.recipe||{};
       // Never save an empty shell — guard against blank "Untitled" cards
@@ -1282,7 +1298,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       onAdd({id:Date.now().toString(),...r,ogImage,url:text.startsWith("http")?text:"",savedAt:Date.now()});
       onClose();
     }catch(e){setError(e.message||"Couldn't parse — try manual entry.");if(onFail)onFail();}
-    finally{setLoading(false);}
+    finally{setLoading(false);setLoadMsg("");}
   }
 
   async function scanIngredients(base64,mediaType){
@@ -1325,8 +1341,8 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       <div style={{background:"var(--cream)",borderRadius:"var(--r-xl)",padding:"36px 32px",textAlign:"center",boxShadow:"var(--sh-xl)",border:"1px solid rgba(255,255,255,.8)",minWidth:220}}>
         {imgPreview&&<img src={imgPreview} style={{width:80,height:80,objectFit:"cover",borderRadius:12,marginBottom:14}}/>}
         {!imgPreview&&<div style={{fontSize:44,marginBottom:14}}>{photoMode==="nutrition"?"🥦":"🌿"}</div>}
-        <div className="serif" style={{fontWeight:600,fontSize:20,color:"var(--forest)",marginBottom:6}}>{photoMode==="nutrition"?"Scanning ingredients…":"Reading recipe…"}</div>
-        <div style={{fontSize:13,color:"var(--mist)"}}>{photoMode==="nutrition"?"AI is analysing ingredients &amp; nutrition":"AI is extracting ingredients &amp; steps"}</div>
+        <div className="serif" style={{fontWeight:600,fontSize:20,color:"var(--forest)",marginBottom:6}}>{loadMsg?"Still working…":photoMode==="nutrition"?"Scanning ingredients…":"Reading recipe…"}</div>
+        <div style={{fontSize:13,color:"var(--mist)",lineHeight:1.5}}>{loadMsg||(photoMode==="nutrition"?"AI is analysing ingredients & nutrition":"AI is extracting ingredients & steps")}</div>
       </div>
     </div>
   );

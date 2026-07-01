@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.55";
+const APP_VERSION = "2.56";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.56", title:"More Instagram/TikTok links can upgrade photos", items:[
+    "Photo upgrade now accepts all Instagram/TikTok link formats (reels, share links, short links)",
+  ]},
   { v:"2.55", title:"Screen stays awake during image fix", items:[
     "The screen no longer sleeps while Fix Images is running, so long batches finish uninterrupted",
   ]},

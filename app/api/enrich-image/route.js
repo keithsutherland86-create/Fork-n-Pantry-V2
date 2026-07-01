@@ -15,9 +15,12 @@ export async function POST(req) {
   try { body = await req.json(); } catch { return Response.json({ ok:false }, { status:400 }); }
   const { url = "", recipeId = "", userId = "" } = body;
 
-  const isInstagram = /instagram\.com\/(p|reel|tv)\//i.test(url);
-  const isTikTok = /tiktok\.com\/@[^/]+\/video\//i.test(url);
-  if (!url || (!isInstagram && !isTikTok)) return Response.json({ ok:false });
+  // Permissive: match ANY Instagram/TikTok URL (the client already flagged it social) and let
+  // Apify sort out the exact post. The old strict path patterns silently rejected reels/share
+  // links, returning no reason — which read as "0 succeeded" with no explanation.
+  const isInstagram = /instagram\.com/i.test(url);
+  const isTikTok = /tiktok\.com/i.test(url);
+  if (!url || (!isInstagram && !isTikTok)) return Response.json({ ok:false, reason:"not-a-supported-link" });
 
   // 1. High-res image from the dedicated scraper
   if (!process.env.APIFY_TOKEN) return Response.json({ ok:false, reason:"no-apify-token" });

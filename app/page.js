@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.47";
+const APP_VERSION = "2.48";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.48", title:"Import services status check", items:[
+    "Settings → Import services shows at a glance which import/hosting keys are connected",
+  ]},
   { v:"2.47", title:"Upgrade photos on existing recipes", items:[
     "'Fix all images' now also pulls sharper, permanent photos for your existing Instagram/TikTok recipes",
   ]},
@@ -2471,7 +2474,13 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
   const[signingIn,setSigningIn]=useState(false);
   const[fixing,setFixing]=useState(false);
   const[fixMsg,setFixMsg]=useState("");
+  const[cfg,setCfg]=useState(null);
+  const[showDiag,setShowDiag]=useState(false);
   const importRef=useRef(null);
+
+  useEffect(()=>{ if(showDiag&&!cfg){
+    fetch("/api/config-check").then(r=>r.json()).then(setCfg).catch(()=>setCfg({error:true}));
+  }},[showDiag,cfg]);
 
   async function handleFixImages(){
     if(!onFixImages||fixing)return;
@@ -2664,6 +2673,31 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onF
             <div style={label}>App Version</div>
             <span style={{fontSize:13,color:"var(--mist)"}}>Fork n Pantry v{APP_VERSION}</span>
           </div>
+          <div style={{...row,cursor:"pointer"}} onClick={()=>setShowDiag(v=>!v)}>
+            <div style={label}>Import services</div>
+            <span style={{fontSize:13,color:"var(--mist)"}}>{showDiag?"Hide":"Check ▸"}</span>
+          </div>
+          {showDiag&&(
+            <div style={{padding:"12px 16px",background:"var(--cream)",borderRadius:"var(--r-md)",border:"1px solid var(--parchment)",marginBottom:6}}>
+              {!cfg&&<div style={{fontSize:13,color:"var(--mist)"}}>Checking…</div>}
+              {cfg?.error&&<div style={{fontSize:13,color:"#B91C1C"}}>Couldn't reach the server.</div>}
+              {cfg&&!cfg.error&&(()=>{
+                const rows=[
+                  ["AI parsing (Anthropic)",cfg.anthropic,true],
+                  ["Cloud sync (Supabase)",cfg.supabaseUrl&&cfg.supabaseAnon,true],
+                  ["Social scraper (Apify)",cfg.apify,false],
+                  ["Permanent photos (Supabase key)",cfg.supabaseServiceKey,false],
+                ];
+                return rows.map(([name,ok,req])=>(
+                  <div key={name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"4px 0",fontSize:13}}>
+                    <span style={{color:"var(--charcoal)"}}>{name}</span>
+                    <span style={{fontWeight:700,color:ok?"#15803D":(req?"#B91C1C":"var(--mist)")}}>{ok?"✓ on":(req?"✗ missing":"— off")}</span>
+                  </div>
+                ));
+              })()}
+              <div style={{fontSize:11,color:"var(--mist)",marginTop:8,lineHeight:1.5}}>Grey "off" is optional. Set keys in Vercel → Environment Variables, then redeploy.</div>
+            </div>
+          )}
           <div style={{marginTop:14,padding:"14px 16px",background:"var(--sage-pale)",borderRadius:"var(--r-md)",border:"1px solid var(--sage-lt)"}}>
             <div className="serif" style={{fontWeight:600,fontSize:16,color:"var(--forest)",marginBottom:6}}>Fork n Pantry</div>
             <div style={{fontSize:13,color:"var(--bark)",lineHeight:1.7}}>Your personal recipe collection — save, organise, and cook from any device. Import recipes from URLs, photos, or voice. Plan your week and build a grocery list automatically.</div>

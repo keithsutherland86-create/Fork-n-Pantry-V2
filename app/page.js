@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.54";
+const APP_VERSION = "2.55";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.55", title:"Screen stays awake during image fix", items:[
+    "The screen no longer sleeps while Fix Images is running, so long batches finish uninterrupted",
+  ]},
   { v:"2.54", title:"Upgraded photos actually refresh", items:[
     "Sharper re-hosted photos now reload instead of showing the old cached version",
   ]},
@@ -3447,6 +3450,18 @@ function AppInner(){
     const res=await fixAllImages(p=>setFixProgress({running:true,...p}));
     setFixProgress({running:false,done:res.total,total:res.total,fixed:res.fixed,failed:res.failed,skipped:res.skipped,lastErr:res.lastErr,upgraded:res.upgraded,enrichTried:res.enrichTried,enrichReason:res.enrichReason});
   }
+
+  // Keep the screen awake while the (potentially long) image fix runs; release when done.
+  useEffect(()=>{
+    if(!fixProgress?.running)return;
+    let lock=null;
+    const req=async()=>{try{lock=await navigator.wakeLock?.request("screen");}catch{}};
+    req();
+    // Wake locks auto-drop when the tab is hidden — re-acquire when it returns.
+    const onVis=()=>{if(document.visibilityState==="visible"&&fixProgress?.running)req();};
+    document.addEventListener("visibilitychange",onVis);
+    return()=>{document.removeEventListener("visibilitychange",onVis);try{lock?.release();}catch{}};
+  },[fixProgress?.running]);
 
   function dismissWelcome(){
     localStorage.setItem("fnp_welcomed","1");

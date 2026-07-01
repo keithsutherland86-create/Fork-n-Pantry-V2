@@ -53,7 +53,11 @@ export async function POST(req) {
       return Response.json({ ok:true, image: ap.image, permanent:false, reason:`upload: ${(upErr.message||"error").slice(0,60)}` });
     }
     const { data:{ publicUrl } } = sb.storage.from("recipe-images").getPublicUrl(path);
-    return Response.json({ ok:true, image: publicUrl, permanent:true });
+    // Cache-bust: the file path (and thus URL) is stable, so overwriting it with a sharper
+    // image wouldn't visibly change anything — the browser/service-worker cache the old bytes.
+    // A version query forces a fresh load without leaving orphaned files behind.
+    const busted = `${publicUrl}?v=${Date.now()}`;
+    return Response.json({ ok:true, image: busted, permanent:true });
   } catch (e) {
     console.error("enrich-image rehost failed:", e?.message);
     return Response.json({ ok:true, image: ap.image, permanent:false, reason:"rehost-exception" });

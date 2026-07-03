@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.63";
+const APP_VERSION = "2.64";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.64", title:"Fix overlapping badges on recipe cards", items:[
+    "Calorie and cook-count badges no longer overlap on recipe cards (Android)",
+  ]},
   { v:"2.63", title:"Add to cookbooks from a recipe", items:[
     "Open any recipe and tap a cookbook chip to add or remove it — no need to go to the Cookbooks tab",
   ]},
@@ -425,13 +428,17 @@ function RecipeCard({recipe,onOpen,onDelete,onToggleFav}){
       <RImg recipe={recipe} style={{width:"100%",height:"100%",position:"absolute",inset:0}}/>
       <div style={{position:"absolute",inset:0,background:"linear-gradient(transparent 35%,rgba(10,18,14,.80))"}}/>
       <button onClick={e=>{e.stopPropagation();if(window.confirm(`Delete "${recipe.title}"?`))onDelete(recipe.id);}} style={{...glassBtn,position:"absolute",top:8,right:8}}>×</button>
-      {onToggleFav&&<button onClick={e=>{e.stopPropagation();onToggleFav();}} style={{...glassBtn,position:"absolute",top:8,left:8,fontSize:recipe.fav?15:13}}>{recipe.fav?"❤️":"🤍"}</button>}
-      {recipe.nutrition?.calories>0&&(
-        <div style={{position:"absolute",top:8,left:onToggleFav?44:8,background:"rgba(10,18,14,.52)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.18)",borderRadius:20,padding:"3px 8px",fontSize:10,color:"rgba(255,255,255,.95)",fontWeight:700}}>🔥 {recipe.nutrition.calories}</div>
-      )}
-      {recipe.cookHistory?.length>0&&(
-        <div style={{position:"absolute",top:8,left:onToggleFav?(recipe.nutrition?.calories>0?80:44):(recipe.nutrition?.calories>0?52:8),background:"rgba(10,18,14,.52)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.18)",borderRadius:20,padding:"3px 8px",fontSize:10,color:"rgba(255,255,255,.95)",fontWeight:700}}>✓ {recipe.cookHistory.length}×</div>
-      )}
+      {/* Top-left badges in a flex row (right-bounded to clear the delete ×) so they never
+          overlap regardless of how wide the calorie/cook values are */}
+      <div style={{position:"absolute",top:8,left:8,right:44,display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",zIndex:2}}>
+        {onToggleFav&&<button onClick={e=>{e.stopPropagation();onToggleFav();}} style={{...glassBtn,flexShrink:0,fontSize:recipe.fav?15:13}}>{recipe.fav?"❤️":"🤍"}</button>}
+        {recipe.nutrition?.calories>0&&(
+          <div style={{background:"rgba(10,18,14,.52)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.18)",borderRadius:20,padding:"3px 8px",fontSize:10,color:"rgba(255,255,255,.95)",fontWeight:700,whiteSpace:"nowrap"}}>🔥 {recipe.nutrition.calories}</div>
+        )}
+        {recipe.cookHistory?.length>0&&(
+          <div style={{background:"rgba(10,18,14,.52)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.18)",borderRadius:20,padding:"3px 8px",fontSize:10,color:"rgba(255,255,255,.95)",fontWeight:700,whiteSpace:"nowrap"}}>✓ {recipe.cookHistory.length}×</div>
+        )}
+      </div>
       <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"8px 10px 10px"}}>
         <div className="serif" style={{fontWeight:600,fontSize:14,color:"#fff",lineHeight:1.2,marginBottom:4,textShadow:"0 1px 4px rgba(0,0,0,.5)"}}>{recipe.title||"Untitled"}</div>
         <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>

@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.60";
+const APP_VERSION = "2.61";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.61", title:"More reliable Instagram imports", items:[
+    "Instagram/TikTok imports auto-retry when the scraper is warming up, so they no longer fail on the first try",
+  ]},
   { v:"2.60", title:"Fix imported recipes vanishing", items:[
     "A just-imported recipe no longer disappears when the app re-syncs with the cloud",
   ]},
@@ -1347,7 +1350,15 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
         // Only surface the "taking longer" notice if the retry is actually slow —
         // most retries finish in a few seconds and shouldn't alarm the user.
         const slowTimer=setTimeout(()=>setLoadMsg("Fetching the full post from Instagram — hang tight…"),4000);
-        try{ data=await callParse(text,imageBase64,imageMediaType,true); }
+        try{
+          // The first Apify call after idle cold-starts the scraper and often times out; that
+          // call warms it, so a retry moments later succeeds. Auto-retry a few times so the
+          // user doesn't see a failure that would fix itself.
+          for(let attempt=0; attempt<3 && !data.ok; attempt++){
+            if(attempt>0){ setLoadMsg("Still fetching that post — almost there…"); await new Promise(r=>setTimeout(r,2500)); }
+            data=await callParse(text,imageBase64,imageMediaType,true);
+          }
+        }
         finally{ clearTimeout(slowTimer); }
       }
       if(!data.ok)throw new Error(data.error||"Couldn't parse — try manual entry.");

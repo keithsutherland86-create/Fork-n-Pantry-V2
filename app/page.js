@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.59";
+const APP_VERSION = "2.60";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.60", title:"Fix imported recipes vanishing", items:[
+    "A just-imported recipe no longer disappears when the app re-syncs with the cloud",
+  ]},
   { v:"2.59", title:"Import issue log", items:[
     "Settings → Import services now keeps the last 10 failed imports with their reason, so intermittent issues aren't lost",
   ]},
@@ -3292,6 +3295,10 @@ function AppInner(){
     toastTimer.current=setTimeout(()=>setToast(null),4500);
   }
   const lastBackRef=useRef(0);
+  // Always-fresh mirror of recipes so async syncs merge against live state, never a stale snapshot
+  const recipesRef=useRef([]);
+  useEffect(()=>{recipesRef.current=recipes;},[recipes]);
+  const syncedUidRef=useRef(null); // guards against re-syncing on token refreshes
   const searchParams=useSearchParams();
   const router=useRouter();
 
@@ -3325,6 +3332,7 @@ function AppInner(){
       sb.auth.getSession().then(({data:{session:s}})=>{
         setSession(s);
         if(s){
+          syncedUidRef.current=s.user.id;
           syncOnLogin(s.user.id,localRecipes);
           sbLoadMySharedBooks(s).then(setSharedBooks);
           const pendingJoin=sessionStorage.getItem("fnp_join_code");
@@ -3336,7 +3344,17 @@ function AppInner(){
       });
       const{data:{subscription}}=sb.auth.onAuthStateChange((_event,s)=>{
         setSession(s);
-        if(s){syncOnLogin(s.user.id,load(KEYS.r));sbLoadMySharedBooks(s).then(setSharedBooks);}
+        // Only full-sync when the signed-in user actually changes — token refreshes (which fire
+        // on returning to the app) would otherwise re-run sync and can clobber a fresh import.
+        if(s){
+          if(syncedUidRef.current!==s.user.id){
+            syncedUidRef.current=s.user.id;
+            syncOnLogin(s.user.id,load(KEYS.r));
+          }
+          sbLoadMySharedBooks(s).then(setSharedBooks);
+        } else {
+          syncedUidRef.current=null;
+        }
       });
       return()=>subscription.unsubscribe();
     }
@@ -3362,9 +3380,12 @@ function AppInner(){
       await cloudUploadAll(localRecipes,userId);
       setSyncStatus("synced");
     } else {
-      // Merge: cloud is source of truth; add any local-only recipes
+      // Merge: cloud is source of truth; add any local-only recipes. Merge against the LIVE
+      // in-memory list (recipesRef), not a stale snapshot — otherwise a recipe added while this
+      // async sync is in flight gets dropped and its card disappears a moment after import.
       const cloudIds=new Set(cloud.map(r=>r.id));
-      const localOnly=localRecipes.filter(r=>!cloudIds.has(r.id));
+      const current=recipesRef.current&&recipesRef.current.length?recipesRef.current:localRecipes;
+      const localOnly=current.filter(r=>!cloudIds.has(r.id));
       const merged=[...cloud,...localOnly];
       if(localOnly.length>0)await cloudUploadAll(localOnly,userId);
       setRecipes(merged);

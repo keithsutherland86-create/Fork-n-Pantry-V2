@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.65";
+const APP_VERSION = "2.66";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.66", title:"Cookbook picker shows on top", items:[
+    "The Add-to-cookbook picker now opens above the recipe instead of behind it",
+  ]},
   { v:"2.65", title:"Add to cookbook button", items:[
     "A recipe now has an 'Add to cookbook' button up top that opens a picker — toggle cookbooks or create a new one on the spot",
   ]},
@@ -359,10 +362,10 @@ function RImg({recipe,style:st={},className=""}){
 }
 
 // ─── Bottom sheet ─────────────────────────────────────────────────────────────
-function Sheet({children,onClose,tall}){
+function Sheet({children,onClose,tall,z=400}){
   useBackHandler(true, onClose);
   return(
-    <div style={{position:"fixed",inset:0,background:"rgba(15,24,17,.6)",backdropFilter:"blur(5px)",WebkitBackdropFilter:"blur(5px)",zIndex:400,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
+    <div style={{position:"fixed",inset:0,background:"rgba(15,24,17,.6)",backdropFilter:"blur(5px)",WebkitBackdropFilter:"blur(5px)",zIndex:z,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{background:"var(--linen)",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:tall?"94vh":"88vh",display:"flex",flexDirection:"column",boxShadow:"0 -8px 40px rgba(15,24,17,.2)",paddingBottom:"env(safe-area-inset-bottom)"}}>
         <div style={{width:34,height:4,background:"var(--sage-lt)",borderRadius:2,margin:"12px auto 0",flexShrink:0}}/>
         <div style={{overflowY:"auto",flex:1}}>{children}</div>
@@ -1340,7 +1343,7 @@ function BookPicker({books=[],recipeId,onToggle,onCreate,onClose}){
   useBackHandler(true,onClose);
   const row={display:"flex",alignItems:"center",gap:10,padding:"11px 13px",borderRadius:"var(--r-md)",border:"1px solid var(--sage-lt)",background:"var(--cream)",cursor:"pointer",width:"100%",textAlign:"left"};
   return(
-    <Sheet onClose={onClose}>
+    <Sheet onClose={onClose} z={560}>{/* above the RecipeModal (z 500) */}
       <div style={{padding:"14px 18px 24px"}}>
         <div className="serif" style={{fontWeight:600,fontSize:20,color:"var(--forest)",marginBottom:14}}>Add to cookbook</div>
         <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:"46vh",overflowY:"auto"}}>

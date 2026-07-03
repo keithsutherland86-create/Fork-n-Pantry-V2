@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.64";
+const APP_VERSION = "2.65";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.65", title:"Add to cookbook button", items:[
+    "A recipe now has an 'Add to cookbook' button up top that opens a picker — toggle cookbooks or create a new one on the spot",
+  ]},
   { v:"2.64", title:"Fix overlapping badges on recipe cards", items:[
     "Calorie and cook-count badges no longer overlap on recipe cards (Android)",
   ]},
@@ -1097,8 +1100,9 @@ function EditModal({recipe,onSave,onClose}){
   );
 }
 
-function RecipeModal({recipe,onClose,onUpdate,books=[],onToggleBook}){
+function RecipeModal({recipe,onClose,onUpdate,books=[],onToggleBook,onCreateBook}){
   const[servings,setServings]=useState(null);
+  const[showBookPicker,setShowBookPicker]=useState(false);
   const[unit,setUnit]=useState("original");
   const[editing,setEditing]=useState(false);
   const[cookMode,setCookMode]=useState(false);
@@ -1202,7 +1206,17 @@ function RecipeModal({recipe,onClose,onUpdate,books=[],onToggleBook}){
         )}
 
         <div style={{padding:"18px 20px 0"}}>
-          {recipe.url&&<a href={recipe.url} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:13,color:"var(--moss)",background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"4px 12px",fontWeight:600,textDecoration:"none",marginBottom:14}}>🔗 View original recipe</a>}
+          {(recipe.url||onToggleBook)&&(
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+              {recipe.url
+                ? <a href={recipe.url} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:13,color:"var(--moss)",background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"4px 12px",fontWeight:600,textDecoration:"none"}}>🔗 View original recipe</a>
+                : <span/>}
+              {onToggleBook&&(()=>{
+                const n=books.filter(b=>(b.recipeIds||[]).includes(recipe.id)).length;
+                return <button onClick={()=>setShowBookPicker(true)} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:13,color:"var(--moss)",background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"4px 12px",fontWeight:600,cursor:"pointer"}}>📗 {n>0?`In ${n} cookbook${n!==1?"s":""}`:"Add to cookbook"}</button>;
+              })()}
+            </div>
+          )}
           {recipe.description&&<p style={{color:"var(--bark)",fontSize:14,lineHeight:1.75,marginBottom:16,fontStyle:"italic"}}>{recipe.description}</p>}
 
           <NutritionRing nutrition={recipe.nutrition} servings={servings} base={base}/>
@@ -1288,31 +1302,6 @@ function RecipeModal({recipe,onClose,onUpdate,books=[],onToggleBook}){
             )}
           </div>
 
-          {/* Add to cookbooks */}
-          {onToggleBook&&(
-            <div style={{marginBottom:16}}>
-              <div style={{fontSize:13,fontWeight:700,color:"var(--forest)",marginBottom:8}}>Cookbooks</div>
-              {books.length===0?(
-                <div style={{fontSize:12,color:"var(--mist)"}}>No cookbooks yet — create one in the Cookbooks tab, then add this recipe here.</div>
-              ):(
-                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                  {books.map(b=>{
-                    const inBook=(b.recipeIds||[]).includes(recipe.id);
-                    return(
-                      <button key={b.id} onClick={()=>onToggleBook(b.id,recipe.id)}
-                        style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 12px",borderRadius:20,fontSize:13,fontWeight:600,cursor:"pointer",
-                          border:inBook?"1px solid var(--moss)":"1px solid var(--sage-lt)",
-                          background:inBook?"var(--moss)":"var(--sage-pale)",
-                          color:inBook?"#fff":"var(--forest)"}}>
-                        <span>{b.emoji||"📗"}</span>{b.name}<span style={{fontWeight:800}}>{inBook?"✓":"+"}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
           {/* Personal notes (AI-proof) */}
           <div style={{marginBottom:16}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
@@ -1339,7 +1328,47 @@ function RecipeModal({recipe,onClose,onUpdate,books=[],onToggleBook}){
       </div>
     </div>
     {editing&&<EditModal recipe={recipe} onSave={r=>{onUpdate(r);setEditing(false);}} onClose={()=>setEditing(false)}/>}
+    {showBookPicker&&<BookPicker books={books} recipeId={recipe.id} onToggle={onToggleBook} onCreate={onCreateBook} onClose={()=>setShowBookPicker(false)}/>}
     </>
+  );
+}
+
+// ─── Cookbook picker (from inside a recipe) ─────────────────────────────────────
+function BookPicker({books=[],recipeId,onToggle,onCreate,onClose}){
+  const[newName,setNewName]=useState("");
+  const[creating,setCreating]=useState(false);
+  useBackHandler(true,onClose);
+  const row={display:"flex",alignItems:"center",gap:10,padding:"11px 13px",borderRadius:"var(--r-md)",border:"1px solid var(--sage-lt)",background:"var(--cream)",cursor:"pointer",width:"100%",textAlign:"left"};
+  return(
+    <Sheet onClose={onClose}>
+      <div style={{padding:"14px 18px 24px"}}>
+        <div className="serif" style={{fontWeight:600,fontSize:20,color:"var(--forest)",marginBottom:14}}>Add to cookbook</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:"46vh",overflowY:"auto"}}>
+          {books.length===0&&<div style={{fontSize:13,color:"var(--mist)",padding:"4px 0"}}>No cookbooks yet — create your first one below.</div>}
+          {books.map(b=>{
+            const inBook=(b.recipeIds||[]).includes(recipeId);
+            return(
+              <button key={b.id} onClick={()=>onToggle&&onToggle(b.id,recipeId)}
+                style={{...row,border:inBook?"1.5px solid var(--moss)":"1px solid var(--sage-lt)",background:inBook?"var(--sage-pale)":"var(--cream)"}}>
+                <span style={{fontSize:20}}>{b.emoji||"📗"}</span>
+                <span style={{flex:1,fontSize:15,fontWeight:600,color:"var(--forest)"}}>{b.name}</span>
+                <span style={{fontSize:16,fontWeight:800,color:inBook?"var(--moss)":"var(--mist)"}}>{inBook?"✓":"+"}</span>
+              </button>
+            );
+          })}
+        </div>
+        {creating?(
+          <div style={{display:"flex",gap:8,marginTop:14}}>
+            <input autoFocus value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Cookbook name"
+              onKeyDown={e=>{if(e.key==="Enter"&&newName.trim()){onCreate&&onCreate(newName.trim(),recipeId);setNewName("");setCreating(false);}}}
+              style={{flex:1,background:"var(--cream)",border:"1.5px solid var(--sage-lt)",borderRadius:"var(--r-md)",padding:"11px 13px",fontSize:15,outline:"none",color:"var(--ink)"}}/>
+            <button onClick={()=>{if(newName.trim()){onCreate&&onCreate(newName.trim(),recipeId);setNewName("");setCreating(false);}}} className="btn-primary" style={{padding:"0 18px",borderRadius:"var(--r-md)",fontWeight:700}}>Create</button>
+          </div>
+        ):(
+          <button onClick={()=>setCreating(true)} style={{marginTop:14,width:"100%",padding:"12px 0",borderRadius:"var(--r-md)",border:"1.5px dashed var(--sage-lt)",background:"var(--sage-pale)",color:"var(--moss)",fontSize:14,fontWeight:700,cursor:"pointer"}}>+ New cookbook</button>
+        )}
+      </div>
+    </Sheet>
   );
 }
 
@@ -1581,7 +1610,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
 }
 
 // ─── RECIPES TAB ──────────────────────────────────────────────────────────────
-function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared,onImportFail,onRefresh,books=[],onToggleBook}){
+function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared,onImportFail,onRefresh,books=[],onToggleBook,onCreateBook}){
   const[search,setSearch]=useState("");
   const[tag,setTag]=useState("");
   const[showFavs,setShowFavs]=useState(false);
@@ -1726,7 +1755,7 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared,o
       )}
 
       {showAdd&&<AddSheet onAdd={r=>{onAdd(r);setShowAdd(false);clearShared();}} onClose={()=>{setShowAdd(false);clearShared();}} prefill={sharedPrefill} recipes={recipes} onFail={onImportFail}/>}
-      <RecipeModal recipe={selected} onClose={()=>setSelected(null)} onUpdate={r=>{onUpdate(r);setSelected(r);}} books={books} onToggleBook={onToggleBook}/>
+      <RecipeModal recipe={selected} onClose={()=>setSelected(null)} onUpdate={r=>{onUpdate(r);setSelected(r);}} books={books} onToggleBook={onToggleBook} onCreateBook={onCreateBook}/>
     </div>
   );
 }
@@ -1768,7 +1797,7 @@ function CollaboratorsStrip({book,recipeRows=[],sessionUserId}){
     </div>
   );
 }
-function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,onAdd,session,sharedBooks=[],onRefreshShared,onToggleBook}){
+function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,onAdd,session,sharedBooks=[],onRefreshShared,onToggleBook,onCreateBook}){
   const[showNew,setShowNew]=useState(false);
   const[newName,setNewName]=useState("");
   const[newEmoji,setNewEmoji]=useState(BOOK_EMOJIS[0]);
@@ -1914,7 +1943,7 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
           </div>
         </Sheet>
       )}
-      <RecipeModal recipe={recipeModal} onClose={()=>setRecipeModal(null)} onUpdate={r=>{if(onUpdate)onUpdate(r);setRecipeModal(r);}} books={books} onToggleBook={onToggleBook}/>
+      <RecipeModal recipe={recipeModal} onClose={()=>setRecipeModal(null)} onUpdate={r=>{if(onUpdate)onUpdate(r);setRecipeModal(r);}} books={books} onToggleBook={onToggleBook} onCreateBook={onCreateBook}/>
     </div>
   );
 
@@ -1973,7 +2002,7 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
           </div>
         </Sheet>
       )}
-      <RecipeModal recipe={recipeModal} onClose={()=>setRecipeModal(null)} onUpdate={r=>{if(onUpdate)onUpdate(r);setRecipeModal(r);}} books={books} onToggleBook={onToggleBook}/>
+      <RecipeModal recipe={recipeModal} onClose={()=>setRecipeModal(null)} onUpdate={r=>{if(onUpdate)onUpdate(r);setRecipeModal(r);}} books={books} onToggleBook={onToggleBook} onCreateBook={onCreateBook}/>
     </div>
   );
 
@@ -2069,7 +2098,7 @@ function CookbooksTab({recipes,categories:books,setCategories:setBooks,onUpdate,
 }
 
 // ─── PLANNER TAB ──────────────────────────────────────────────────────────────
-function PlannerTab({recipes,planner,setPlanner,onUpdate,books=[],onToggleBook}){
+function PlannerTab({recipes,planner,setPlanner,onUpdate,books=[],onToggleBook,onCreateBook}){
   const[picking,setPicking]=useState(null);
   const[search,setSearch]=useState("");
   const[recipeModal,setRecipeModal]=useState(null);
@@ -2204,7 +2233,7 @@ function PlannerTab({recipes,planner,setPlanner,onUpdate,books=[],onToggleBook})
 
       {/* Grocery list sheet */}
       {showGrocery&&<GrocerySheet items={buildGroceryList()} onClose={()=>setShowGrocery(false)} onRefresh={buildGroceryList}/>}
-      <RecipeModal recipe={recipeModal} onClose={()=>setRecipeModal(null)} onUpdate={r=>{if(onUpdate)onUpdate(r);setRecipeModal(r);}} books={books} onToggleBook={onToggleBook}/>
+      <RecipeModal recipe={recipeModal} onClose={()=>setRecipeModal(null)} onUpdate={r=>{if(onUpdate)onUpdate(r);setRecipeModal(r);}} books={books} onToggleBook={onToggleBook} onCreateBook={onCreateBook}/>
     </div>
   );
 }
@@ -3596,6 +3625,15 @@ function AppInner(){
       return u;
     });
   }
+  // Create a new cookbook already containing the recipe (from the in-recipe picker)
+  function createBookWithRecipe(name,recipeId){
+    setCategories(prev=>{
+      const nb={id:Date.now().toString(),name:name.trim(),color:CAT_COLORS[prev.length%CAT_COLORS.length],emoji:"📗",recipeIds:[recipeId]};
+      const u=[...prev,nb];
+      save(KEYS.c,u);
+      return u;
+    });
+  }
   function updateRecipe(r){
     const u=recipes.map(x=>x.id===r.id?r:x);setRecipes(u);save(KEYS.r,u);
     if(session)cloudUpsert(r,session.user.id).then(()=>setSyncStatus("synced"));
@@ -3722,9 +3760,9 @@ function AppInner(){
       {showHelp&&<HelpModal onClose={()=>setShowHelp(false)}/>}
       {showWhatsNew&&<WhatsNewModal onClose={()=>{try{localStorage.setItem("fnp_whatsnew_seen",LATEST_NOTABLE);}catch{}setShowWhatsNew(false);}}/>}
       {showTutorial&&<TutorialModal onClose={()=>setShowTutorial(false)}/>}
-      <RecipeModal recipe={globalModalRecipe} onClose={()=>setGlobalModalRecipe(null)} onUpdate={r=>{updateRecipe(r);setGlobalModalRecipe(r);}} books={categories} onToggleBook={toggleRecipeInBook}/>
-      {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")} onImportFail={()=>showToast("error",null,"Import failed — couldn't read that recipe")} books={categories} onToggleBook={toggleRecipeInBook} onRefresh={session?async()=>{setSyncStatus("syncing");const cloud=await cloudLoad(session.user.id);if(cloud){setRecipes(cloud);save(KEYS.r,cloud);setSyncStatus("synced");}else setSyncStatus("idle");}:null}/>}
-      {tab==="categories"&&<CookbooksTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe} onAdd={addRecipe} session={session} sharedBooks={sharedBooks} onRefreshShared={()=>sbLoadMySharedBooks(session).then(setSharedBooks)} onToggleBook={toggleRecipeInBook}/>}
+      <RecipeModal recipe={globalModalRecipe} onClose={()=>setGlobalModalRecipe(null)} onUpdate={r=>{updateRecipe(r);setGlobalModalRecipe(r);}} books={categories} onToggleBook={toggleRecipeInBook} onCreateBook={createBookWithRecipe}/>
+      {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")} onImportFail={()=>showToast("error",null,"Import failed — couldn't read that recipe")} books={categories} onToggleBook={toggleRecipeInBook} onCreateBook={createBookWithRecipe} onRefresh={session?async()=>{setSyncStatus("syncing");const cloud=await cloudLoad(session.user.id);if(cloud){setRecipes(cloud);save(KEYS.r,cloud);setSyncStatus("synced");}else setSyncStatus("idle");}:null}/>}
+      {tab==="categories"&&<CookbooksTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe} onAdd={addRecipe} session={session} sharedBooks={sharedBooks} onRefreshShared={()=>sbLoadMySharedBooks(session).then(setSharedBooks)} onToggleBook={toggleRecipeInBook} onCreateBook={createBookWithRecipe}/>}
       {joinPreview&&(
         <div style={{position:"fixed",inset:0,background:"rgba(15,24,17,.6)",backdropFilter:"blur(5px)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
           <div style={{background:"var(--linen)",borderRadius:"var(--r-xl)",padding:"28px 24px",maxWidth:340,width:"100%",textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
@@ -3739,7 +3777,7 @@ function AppInner(){
           </div>
         </div>
       )}
-      {tab==="planner"&&<PlannerTab recipes={recipes} planner={planner} setPlanner={setPlanner} onUpdate={updateRecipe} books={categories} onToggleBook={toggleRecipeInBook}/>}
+      {tab==="planner"&&<PlannerTab recipes={recipes} planner={planner} setPlanner={setPlanner} onUpdate={updateRecipe} books={categories} onToggleBook={toggleRecipeInBook} onCreateBook={createBookWithRecipe}/>}
       {tab==="scan"&&<ScanTab recipes={recipes} onOpenRecipe={r=>setSelectedRecipeGlobal(r)}/>}
       {tab==="grocery"&&<GroceryTab/>}
       {tab==="settings"&&<SettingsTab session={session} onSignIn={handleSignIn} onSignOut={handleSignOut} syncStatus={syncStatus} recipes={recipes} onImport={rs=>{const merged=[...rs.filter(r=>!recipes.find(x=>x.id===r.id)),...recipes];setRecipes(merged);save(KEYS.r,merged);}} onRunFix={runFixImages} fixProgress={fixProgress} onWhatsNew={()=>setShowWhatsNew(true)} onTutorial={()=>setShowTutorial(true)}/>}

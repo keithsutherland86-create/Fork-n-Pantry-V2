@@ -5,10 +5,14 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.61";
+const APP_VERSION = "2.62";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.62", title:"New guided tour", major:true, items:[
+    "First-time users get a walkthrough of the main features and Pro perks",
+    "Replay it anytime from Settings → Take the Tour",
+  ]},
   { v:"2.61", title:"More reliable Instagram imports", items:[
     "Instagram/TikTok imports auto-retry when the scraper is warming up, so they no longer fail on the first try",
   ]},
@@ -2530,7 +2534,7 @@ function GroceryTab(){
 }
 
 // ─── SETTINGS TAB ─────────────────────────────────────────────────────────────
-function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onRunFix,fixProgress,onWhatsNew}){
+function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onRunFix,fixProgress,onWhatsNew,onTutorial}){
   const[dark,setDark]=useState(()=>{try{return localStorage.getItem(KEYS.t)==="dark";}catch{return false;}});
   const[wakeLock,setWakeLock]=useState(()=>{try{return localStorage.getItem("fnp_wakelock")!=="off";}catch{return true;}});
   const[wakePhrase,setWakePhrase]=useState(()=>{try{return localStorage.getItem("fnp_wakephrase")||"";}catch{return "";}});
@@ -2744,6 +2748,13 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onR
               <div style={sub}>See recent changes and improvements</div>
             </div>
             <button onClick={onWhatsNew} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>✨ What's New</button>
+          </div>
+          <div style={row}>
+            <div style={{flex:1}}>
+              <div style={label}>Take the Tour</div>
+              <div style={sub}>Replay the feature walkthrough</div>
+            </div>
+            <button onClick={onTutorial} style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",color:"var(--moss)"}}>📖 Tour</button>
           </div>
           <div style={row}>
             <div style={label}>App Version</div>
@@ -3130,6 +3141,76 @@ function WhatsNewModal({onClose}){
   );
 }
 
+// ─── Tutorial / feature walkthrough ─────────────────────────────────────────────
+const TUTORIAL_SLIDES = [
+  { icon:"👋", title:"Welcome to Fork n Pantry", desc:"Your whole recipe collection in one place — import from anywhere, organise into cookbooks, and cook hands-free." },
+  { icon:"➕", title:"Import any recipe", desc:"Tap the + button to add a recipe. Paste a website link or an Instagram/TikTok caption, snap a photo of a cookbook page, dictate it by voice, or type it in — AI turns it into a clean, structured recipe." },
+  { icon:"📗", title:"Organise into cookbooks", desc:"Group recipes into your own cookbooks, tap the heart to favourite the best ones, and search instantly by title or even a single ingredient." },
+  { icon:"👨‍🍳", title:"Hands-free Cook Mode", desc:"Open any recipe and tap Start Cook Mode. Say your wake phrase then \"next\", \"back\", \"repeat\" or \"what's next\" to move through the steps without touching your phone — perfect for messy hands." },
+  { icon:"🗓️", title:"Plan your week & shop", desc:"Add recipes to the weekly planner, then auto-build a grocery list from them. It even hides items you've marked as already in your pantry." },
+  { icon:"📷", title:"Scan ingredients", desc:"Point your camera at ingredients or a finished meal to estimate the nutrition and add what you need straight to your grocery list." },
+];
+
+function TutorialModal({ onClose }){
+  const [i, setI] = useState(0);
+  useBackHandler(true, onClose);
+  const total = TUTORIAL_SLIDES.length + 1; // + a final Pro slide
+  const isPro = i === total - 1;
+  const last = i === total - 1;
+  const s = TUTORIAL_SLIDES[i];
+  const finish = ()=>{ try{ localStorage.setItem("fnp_tutorial_seen","1"); }catch{} onClose(); };
+  const touch = useRef(null);
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:950,background:"rgba(10,20,14,.75)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",padding:22}}
+      onTouchStart={e=>{touch.current=e.touches[0].clientX;}}
+      onTouchEnd={e=>{ if(touch.current==null)return; const dx=e.changedTouches[0].clientX-touch.current; touch.current=null; if(dx<-45&&i<total-1)setI(i+1); else if(dx>45&&i>0)setI(i-1); }}>
+      <div style={{background:"var(--white)",borderRadius:"var(--r-xl)",width:"100%",maxWidth:380,maxHeight:"88vh",display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"var(--sh-xl)"}}>
+        <div style={{display:"flex",justifyContent:"flex-end",padding:"10px 12px 0"}}>
+          <button onClick={finish} style={{background:"none",border:"none",color:"var(--mist)",fontSize:13,fontWeight:600,cursor:"pointer"}}>Skip</button>
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:"6px 28px 8px",textAlign:"center"}}>
+          {isPro ? (
+            <div style={{textAlign:"left"}}>
+              <div style={{fontSize:44,textAlign:"center",marginBottom:8}}>✨</div>
+              <div className="serif" style={{fontSize:23,fontWeight:600,color:"var(--forest)",textAlign:"center",marginBottom:4}}>Pro features</div>
+              <div style={{fontSize:13,color:"var(--mist)",textAlign:"center",marginBottom:18,lineHeight:1.5}}>Extra powers for serious home cooks</div>
+              <div style={{display:"flex",flexDirection:"column",gap:13}}>
+                {PRO_FEATURES.map((f,idx)=>(
+                  <div key={idx} style={{display:"flex",gap:11,alignItems:"flex-start"}}>
+                    <span style={{fontSize:20,flexShrink:0,lineHeight:1.3}}>{f.icon}</span>
+                    <div>
+                      <div style={{fontSize:14,fontWeight:700,color:"var(--forest)"}}>{f.name}</div>
+                      <div style={{fontSize:12,color:"var(--bark)",lineHeight:1.5}}>{f.desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div style={{paddingTop:14}}>
+              <div style={{fontSize:64,marginBottom:20}}>{s.icon}</div>
+              <div className="serif" style={{fontSize:25,fontWeight:600,color:"var(--forest)",marginBottom:12,letterSpacing:"-0.01em"}}>{s.title}</div>
+              <div style={{fontSize:15,color:"var(--charcoal)",lineHeight:1.65}}>{s.desc}</div>
+            </div>
+          )}
+        </div>
+        {/* dots */}
+        <div style={{display:"flex",justifyContent:"center",gap:6,padding:"12px 0 4px"}}>
+          {Array.from({length:total}).map((_,d)=>(
+            <span key={d} onClick={()=>setI(d)} style={{width:d===i?18:7,height:7,borderRadius:4,background:d===i?"var(--moss)":"var(--sage-lt)",transition:"width .2s",cursor:"pointer"}}/>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:10,padding:"8px 20px 20px"}}>
+          {i>0&&<button onClick={()=>setI(i-1)} className="btn-ghost" style={{flex:1,padding:"13px 0",borderRadius:"var(--r-md)",fontWeight:600}}>Back</button>}
+          {last
+            ? <button onClick={finish} className="btn-primary" style={{flex:2,padding:"13px 0",borderRadius:"var(--r-md)",fontWeight:700}}>Get cooking 🍳</button>
+            : <button onClick={()=>setI(i+1)} className="btn-primary" style={{flex:2,padding:"13px 0",borderRadius:"var(--r-md)",fontWeight:700}}>Next</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Welcome screen ───────────────────────────────────────────────────────────
 function WelcomeScreen({onSignIn,onContinue}){
   const[busy,setBusy]=useState(false);
@@ -3290,6 +3371,7 @@ function AppInner(){
   const[backToast,setBackToast]=useState(false);
   const[showHelp,setShowHelp]=useState(false);
   const[showWhatsNew,setShowWhatsNew]=useState(false);
+  const[showTutorial,setShowTutorial]=useState(false);
   const[globalModalRecipe,setGlobalModalRecipe]=useState(null);
   const[session,setSession]=useState(null);
   const[syncStatus,setSyncStatus]=useState("idle");
@@ -3329,6 +3411,8 @@ function AppInner(){
     // Show welcome screen on first ever open
     const seen=localStorage.getItem("fnp_welcomed");
     if(!seen)setWelcomed(false);
+    // First-run tutorial: once they're past the welcome screen but haven't seen the walkthrough
+    try{ if(seen && !localStorage.getItem("fnp_tutorial_seen")) setShowTutorial(true); }catch{}
     // Auto-show What's New once per significant release. Skips first-ever install (welcome covers that),
     // and stays dismissed until a newer release is flagged `major` in CHANGELOG.
     try{
@@ -3554,6 +3638,9 @@ function AppInner(){
     // New users start fresh — don't show them old release notes
     try{localStorage.setItem("fnp_whatsnew_seen",LATEST_NOTABLE);}catch{}
     setWelcomed(true);
+    // Kick off the feature walkthrough right after welcome (continue-without-account path;
+    // the sign-in path reloads and picks it up via the mount check above)
+    try{ if(!localStorage.getItem("fnp_tutorial_seen")) setShowTutorial(true); }catch{}
   }
 
   async function handleSignIn(){
@@ -3589,6 +3676,7 @@ function AppInner(){
       <Header count={recipes.length} onHelp={()=>setShowHelp(true)} session={session} onAccountPress={()=>setTab("settings")}/>
       {showHelp&&<HelpModal onClose={()=>setShowHelp(false)}/>}
       {showWhatsNew&&<WhatsNewModal onClose={()=>{try{localStorage.setItem("fnp_whatsnew_seen",LATEST_NOTABLE);}catch{}setShowWhatsNew(false);}}/>}
+      {showTutorial&&<TutorialModal onClose={()=>setShowTutorial(false)}/>}
       <RecipeModal recipe={globalModalRecipe} onClose={()=>setGlobalModalRecipe(null)} onUpdate={r=>{updateRecipe(r);setGlobalModalRecipe(r);}}/>
       {tab==="recipes"&&<RecipesTab recipes={recipes} onAdd={addRecipe} onDelete={deleteRecipe} onUpdate={updateRecipe} sharedPrefill={sharedPrefill} clearShared={()=>setSharedPrefill("")} onImportFail={()=>showToast("error",null,"Import failed — couldn't read that recipe")} onRefresh={session?async()=>{setSyncStatus("syncing");const cloud=await cloudLoad(session.user.id);if(cloud){setRecipes(cloud);save(KEYS.r,cloud);setSyncStatus("synced");}else setSyncStatus("idle");}:null}/>}
       {tab==="categories"&&<CookbooksTab recipes={recipes} categories={categories} setCategories={setCategories} onUpdate={updateRecipe} onAdd={addRecipe} session={session} sharedBooks={sharedBooks} onRefreshShared={()=>sbLoadMySharedBooks(session).then(setSharedBooks)}/>}
@@ -3609,7 +3697,7 @@ function AppInner(){
       {tab==="planner"&&<PlannerTab recipes={recipes} planner={planner} setPlanner={setPlanner} onUpdate={updateRecipe}/>}
       {tab==="scan"&&<ScanTab recipes={recipes} onOpenRecipe={r=>setSelectedRecipeGlobal(r)}/>}
       {tab==="grocery"&&<GroceryTab/>}
-      {tab==="settings"&&<SettingsTab session={session} onSignIn={handleSignIn} onSignOut={handleSignOut} syncStatus={syncStatus} recipes={recipes} onImport={rs=>{const merged=[...rs.filter(r=>!recipes.find(x=>x.id===r.id)),...recipes];setRecipes(merged);save(KEYS.r,merged);}} onRunFix={runFixImages} fixProgress={fixProgress} onWhatsNew={()=>setShowWhatsNew(true)}/>}
+      {tab==="settings"&&<SettingsTab session={session} onSignIn={handleSignIn} onSignOut={handleSignOut} syncStatus={syncStatus} recipes={recipes} onImport={rs=>{const merged=[...rs.filter(r=>!recipes.find(x=>x.id===r.id)),...recipes];setRecipes(merged);save(KEYS.r,merged);}} onRunFix={runFixImages} fixProgress={fixProgress} onWhatsNew={()=>setShowWhatsNew(true)} onTutorial={()=>setShowTutorial(true)}/>}
       <TabBar tab={tab} setTab={setTab}/>
       {backToast&&(
         <div style={{position:"fixed",bottom:90,left:"50%",transform:"translateX(-50%)",background:"rgba(15,24,17,.88)",color:"#fff",borderRadius:24,padding:"10px 20px",fontSize:13,fontWeight:600,zIndex:500,pointerEvents:"none",backdropFilter:"blur(8px)",whiteSpace:"nowrap",boxShadow:"0 4px 16px rgba(0,0,0,.3)"}}>

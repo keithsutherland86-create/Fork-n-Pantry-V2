@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.67";
+const APP_VERSION = "2.68";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.68", title:"Cleaner recipe cards", items:[
+    "Recipe titles now sit beneath the photo instead of over it — easier to read, with time and source below",
+  ]},
   { v:"2.67", title:"Serving size carries into Cook Mode", items:[
     "The servings you set on a recipe now scale the ingredient amounts shown in Cook Mode too",
   ]},
@@ -427,32 +430,42 @@ function NutritionRing({nutrition,servings,base}){
   );
 }
 
-// ─── Recipe card — square grid style ─────────────────────────────────────────
+// ─── Recipe card — square image, title beneath ───────────────────────────────
 function RecipeCard({recipe,onOpen,onDelete,onToggleFav}){
   const glassBtn={background:"rgba(10,18,14,.52)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.18)",color:"rgba(255,255,255,.9)",borderRadius:"50%",width:28,height:28,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2,lineHeight:1};
+  const badge={background:"rgba(10,18,14,.52)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.18)",borderRadius:20,padding:"3px 8px",fontSize:10,color:"rgba(255,255,255,.95)",fontWeight:700,whiteSpace:"nowrap"};
+  const time=recipe.cookTime||recipe.prepTime;
   return(
-    <div onClick={()=>onOpen(recipe)} style={{background:"#fff",borderRadius:16,border:"1px solid rgba(0,0,0,0.05)",boxShadow:"0 2px 12px rgba(0,0,0,0.07),0 1px 3px rgba(0,0,0,0.04)",overflow:"hidden",cursor:"pointer",transition:"transform .2s, box-shadow .2s",aspectRatio:"1/1",position:"relative"}}
-      onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 10px 28px rgba(0,0,0,0.13)";}}
-      onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="0 2px 12px rgba(0,0,0,0.07),0 1px 3px rgba(0,0,0,0.04)";}}>
-      <RImg recipe={recipe} style={{width:"100%",height:"100%",position:"absolute",inset:0}}/>
-      <div style={{position:"absolute",inset:0,background:"linear-gradient(transparent 35%,rgba(10,18,14,.80))"}}/>
-      <button onClick={e=>{e.stopPropagation();if(window.confirm(`Delete "${recipe.title}"?`))onDelete(recipe.id);}} style={{...glassBtn,position:"absolute",top:8,right:8}}>×</button>
-      {/* Top-left badges in a flex row (right-bounded to clear the delete ×) so they never
-          overlap regardless of how wide the calorie/cook values are */}
-      <div style={{position:"absolute",top:8,left:8,right:44,display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",zIndex:2}}>
-        {onToggleFav&&<button onClick={e=>{e.stopPropagation();onToggleFav();}} style={{...glassBtn,flexShrink:0,fontSize:recipe.fav?15:13}}>{recipe.fav?"❤️":"🤍"}</button>}
-        {recipe.nutrition?.calories>0&&(
-          <div style={{background:"rgba(10,18,14,.52)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.18)",borderRadius:20,padding:"3px 8px",fontSize:10,color:"rgba(255,255,255,.95)",fontWeight:700,whiteSpace:"nowrap"}}>🔥 {recipe.nutrition.calories}</div>
-        )}
-        {recipe.cookHistory?.length>0&&(
-          <div style={{background:"rgba(10,18,14,.52)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.18)",borderRadius:20,padding:"3px 8px",fontSize:10,color:"rgba(255,255,255,.95)",fontWeight:700,whiteSpace:"nowrap"}}>✓ {recipe.cookHistory.length}×</div>
+    <div onClick={()=>onOpen(recipe)} style={{cursor:"pointer",display:"flex",flexDirection:"column",gap:8,transition:"transform .2s"}}
+      onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";}}
+      onMouseLeave={e=>{e.currentTarget.style.transform="none";}}>
+      {/* Square image with overlaid badges + tags */}
+      <div style={{position:"relative",aspectRatio:"1/1",borderRadius:16,overflow:"hidden",boxShadow:"0 2px 12px rgba(0,0,0,0.09),0 1px 3px rgba(0,0,0,0.05)"}}>
+        <RImg recipe={recipe} style={{width:"100%",height:"100%",position:"absolute",inset:0}}/>
+        <div style={{position:"absolute",inset:0,background:"linear-gradient(transparent 45%,rgba(10,18,14,.72))"}}/>
+        <button onClick={e=>{e.stopPropagation();if(window.confirm(`Delete "${recipe.title}"?`))onDelete(recipe.id);}} style={{...glassBtn,position:"absolute",top:8,right:8}}>×</button>
+        {/* Top-left badges — flex row so they never overlap regardless of value width */}
+        <div style={{position:"absolute",top:8,left:8,right:44,display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",zIndex:2}}>
+          {onToggleFav&&<button onClick={e=>{e.stopPropagation();onToggleFav();}} style={{...glassBtn,flexShrink:0,fontSize:recipe.fav?15:13}}>{recipe.fav?"❤️":"🤍"}</button>}
+          {recipe.nutrition?.calories>0&&<div style={badge}>🔥 {recipe.nutrition.calories}</div>}
+          {recipe.cookHistory?.length>0&&<div style={badge}>✓ {recipe.cookHistory.length}×</div>}
+        </div>
+        {/* Tags stay overlaid on the image */}
+        {(recipe.tags||[]).length>0&&(
+          <div style={{position:"absolute",left:8,right:8,bottom:8,display:"flex",gap:4,flexWrap:"wrap"}}>
+            {(recipe.tags||[]).slice(0,2).map(t=><Chip key={t} label={t} sm/>)}
+          </div>
         )}
       </div>
-      <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"8px 10px 10px"}}>
-        <div className="serif" style={{fontWeight:600,fontSize:14,color:"#fff",lineHeight:1.2,marginBottom:4,textShadow:"0 1px 4px rgba(0,0,0,.5)"}}>{recipe.title||"Untitled"}</div>
-        <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
-          {(recipe.tags||[]).slice(0,2).map(t=><Chip key={t} label={t} sm/>)}
-        </div>
+      {/* Title + meta beneath the image */}
+      <div style={{padding:"0 2px"}}>
+        <div className="serif" style={{fontWeight:600,fontSize:15,color:"var(--ink)",lineHeight:1.22,letterSpacing:"-0.005em",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{recipe.title||"Untitled"}</div>
+        {(time||recipe.source)&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+            {time&&<span style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:14,padding:"2px 9px",fontSize:11,color:"var(--moss)",fontWeight:700,whiteSpace:"nowrap"}}>⏱ {time}</span>}
+            {recipe.source&&<span style={{marginLeft:"auto",fontSize:11,color:"var(--mist)",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"60%",textAlign:"right"}}>{recipe.source}</span>}
+          </div>
+        )}
       </div>
     </div>
   );

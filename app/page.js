@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.69";
+const APP_VERSION = "2.70";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.70", title:"Fix recipe grid overflowing off-screen", items:[
+    "A long recipe source name could stretch a grid column past the edge of the screen — fixed",
+  ]},
   { v:"2.69", title:"Even recipe card heights", items:[
     "Recipe cards in the grid are now a consistent height regardless of title length",
   ]},
@@ -439,7 +442,7 @@ function RecipeCard({recipe,onOpen,onDelete,onToggleFav}){
   const badge={background:"rgba(10,18,14,.52)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",border:"1px solid rgba(255,255,255,.18)",borderRadius:20,padding:"3px 8px",fontSize:10,color:"rgba(255,255,255,.95)",fontWeight:700,whiteSpace:"nowrap"};
   const time=recipe.cookTime||recipe.prepTime;
   return(
-    <div onClick={()=>onOpen(recipe)} style={{cursor:"pointer",display:"flex",flexDirection:"column",gap:8,transition:"transform .2s"}}
+    <div onClick={()=>onOpen(recipe)} style={{cursor:"pointer",display:"flex",flexDirection:"column",gap:8,transition:"transform .2s",minWidth:0}}
       onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";}}
       onMouseLeave={e=>{e.currentTarget.style.transform="none";}}>
       {/* Square image with overlaid badges + tags */}
@@ -464,7 +467,7 @@ function RecipeCard({recipe,onOpen,onDelete,onToggleFav}){
           title and no time/source don't end up shorter than their neighbours in the row */}
       <div style={{padding:"0 2px"}}>
         <div className="serif" style={{fontWeight:600,fontSize:15,color:"var(--ink)",lineHeight:1.22,letterSpacing:"-0.005em",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",minHeight:"calc(1.22em * 2)"}}>{recipe.title||"Untitled"}</div>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,minHeight:20}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,minHeight:20,minWidth:0}}>
           {time&&<span style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:14,padding:"2px 9px",fontSize:11,color:"var(--moss)",fontWeight:700,whiteSpace:"nowrap"}}>⏱ {time}</span>}
           {recipe.source&&<span style={{marginLeft:"auto",fontSize:11,color:"var(--mist)",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"60%",textAlign:"right"}}>{recipe.source}</span>}
         </div>
@@ -1731,7 +1734,7 @@ function RecipesTab({recipes,onAdd,onDelete,onUpdate,sharedPrefill,clearShared,o
       </div>
 
       {/* List */}
-      <div style={{padding:"10px 12px 0",display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+      <div style={{padding:"10px 12px 0",display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)",gap:10}}>
         {filtered.length===0?(
           <div style={{textAlign:"center",paddingTop:70,paddingBottom:40,gridColumn:"1/-1"}}>
             <div style={{width:80,height:80,borderRadius:24,background:"linear-gradient(145deg,var(--sage-pale),var(--cream))",border:"1px solid var(--parchment)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:40,marginBottom:20,boxShadow:"var(--sh-sm)"}}>

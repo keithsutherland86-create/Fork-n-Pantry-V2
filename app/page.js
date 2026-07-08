@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.66";
+const APP_VERSION = "2.67";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.67", title:"Serving size carries into Cook Mode", items:[
+    "The servings you set on a recipe now scale the ingredient amounts shown in Cook Mode too",
+  ]},
   { v:"2.66", title:"Cookbook picker shows on top", items:[
     "The Add-to-cookbook picker now opens above the recipe instead of behind it",
   ]},
@@ -546,8 +549,10 @@ function playTone(freq=880,dur=0.13,vol=0.18){
     osc.start(ctx.currentTime);osc.stop(ctx.currentTime+dur);
   }catch{}
 }
-function CookMode({recipe,onClose}){
+function CookMode({recipe,onClose,servings,base,unit="original"}){
   const[step,setStep]=useState(0);
+  // Carry the scaling chosen in the recipe view through to Cook Mode's ingredient list
+  const ckScale=(servings&&base)?servings/base:1;
   const[ingsOpen,setIngsOpen]=useState(false);
   const[timer,setTimer]=useState(null);
   const[voiceActive,setVoiceActive]=useState(false);
@@ -865,14 +870,14 @@ function CookMode({recipe,onClose}){
             style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fff"}}>
             <span style={{fontSize:16}}>🥗</span>
             <span style={{flex:1,fontSize:13,fontWeight:700,textAlign:"left"}}>Ingredients</span>
-            <span style={{fontSize:12,color:"rgba(255,255,255,.5)",marginRight:4}}>{ings.length} items</span>
+            <span style={{fontSize:12,color:"rgba(255,255,255,.5)",marginRight:4}}>{ings.length} items{servings?` · serves ${servings}`:""}</span>
             <span style={{fontSize:18,color:"rgba(255,255,255,.6)",transform:ingsOpen?"rotate(180deg)":"none",transition:"transform .2s",display:"inline-block"}}>⌄</span>
           </button>
           {ingsOpen&&(
             <div style={{maxHeight:220,overflowY:"auto",borderTop:"1px solid rgba(255,255,255,.12)",padding:"8px 14px 12px"}}>
               {ings.map((ing,i)=>(
                 <div key={i} style={{fontSize:14,color:"rgba(255,255,255,.9)",padding:"6px 0",borderBottom:i<ings.length-1?"1px solid rgba(255,255,255,.08)":"none"}}>
-                  · {hasStr?fmtIng(ing,"original",1):(typeof ing==="string"?ing:ing.name||"")}
+                  · {hasStr?fmtIng(ing,unit,ckScale):(typeof ing==="string"?ing:ing.name||"")}
                 </div>
               ))}
             </div>
@@ -1145,7 +1150,7 @@ function RecipeModal({recipe,onClose,onUpdate,books=[],onToggleBook,onCreateBook
   },[timer?.running]);
 
   if(!recipe||servings===null)return null;
-  if(cookMode)return <CookMode recipe={recipe} onClose={()=>setCookMode(false)}/>;
+  if(cookMode)return <CookMode recipe={recipe} onClose={()=>setCookMode(false)} servings={servings} base={recipe.servings||4} unit={unit}/>;
 
   const base=recipe.servings||4, scale=servings/base;
   const hasStr=recipe.ingredients?.length>0&&typeof recipe.ingredients[0]==="object";

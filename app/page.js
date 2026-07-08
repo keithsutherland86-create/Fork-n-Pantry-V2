@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.68";
+const APP_VERSION = "2.69";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.69", title:"Even recipe card heights", items:[
+    "Recipe cards in the grid are now a consistent height regardless of title length",
+  ]},
   { v:"2.68", title:"Cleaner recipe cards", items:[
     "Recipe titles now sit beneath the photo instead of over it — easier to read, with time and source below",
   ]},
@@ -457,15 +460,14 @@ function RecipeCard({recipe,onOpen,onDelete,onToggleFav}){
           </div>
         )}
       </div>
-      {/* Title + meta beneath the image */}
+      {/* Title + meta beneath the image — fixed heights reserved so cards with a one-line
+          title and no time/source don't end up shorter than their neighbours in the row */}
       <div style={{padding:"0 2px"}}>
-        <div className="serif" style={{fontWeight:600,fontSize:15,color:"var(--ink)",lineHeight:1.22,letterSpacing:"-0.005em",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{recipe.title||"Untitled"}</div>
-        {(time||recipe.source)&&(
-          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
-            {time&&<span style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:14,padding:"2px 9px",fontSize:11,color:"var(--moss)",fontWeight:700,whiteSpace:"nowrap"}}>⏱ {time}</span>}
-            {recipe.source&&<span style={{marginLeft:"auto",fontSize:11,color:"var(--mist)",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"60%",textAlign:"right"}}>{recipe.source}</span>}
-          </div>
-        )}
+        <div className="serif" style={{fontWeight:600,fontSize:15,color:"var(--ink)",lineHeight:1.22,letterSpacing:"-0.005em",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",minHeight:"calc(1.22em * 2)"}}>{recipe.title||"Untitled"}</div>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,minHeight:20}}>
+          {time&&<span style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:14,padding:"2px 9px",fontSize:11,color:"var(--moss)",fontWeight:700,whiteSpace:"nowrap"}}>⏱ {time}</span>}
+          {recipe.source&&<span style={{marginLeft:"auto",fontSize:11,color:"var(--mist)",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"60%",textAlign:"right"}}>{recipe.source}</span>}
+        </div>
       </div>
     </div>
   );

@@ -95,7 +95,7 @@ async function callGemini(model, parts, maxTokens) {
     .filter(p => p.text && !p.thought)
     .map(p => p.text)
     .join("");
-  return { ok: res.ok && !data.error, data, text };
+  return { ok: res.ok && !data.error, quotaExceeded: data.error?.status === "RESOURCE_EXHAUSTED", data, text };
 }
 
 async function fetchHtml(url, timeout = 7000) {
@@ -278,11 +278,16 @@ Dig deeper into the content below. Infer and reconstruct ingredients and steps f
       ]
     : [{ text:prompt }];
 
-  const { ok, data, text } = await callGemini(
+  let { ok, data, text, quotaExceeded } = await callGemini(
     isDeep ? "gemini-pro-latest" : "gemini-flash-latest",
     parts,
     isDeep ? 4000 : 2200
   );
+  // The pro model requires a billed account (0 free-tier quota) — fall back to flash rather
+  // than hard-failing "AI Refresh" for keys without billing enabled.
+  if (!ok && isDeep && quotaExceeded) {
+    ({ ok, data, text } = await callGemini("gemini-flash-latest", parts, 2200));
+  }
 
   if(!ok) {
     console.error("Gemini API error:", JSON.stringify(data));

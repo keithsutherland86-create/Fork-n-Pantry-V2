@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.73";
+const APP_VERSION = "2.74";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.74", title:"Fix AI Refresh failing on quota errors", items:[
+    "AI Refresh (deep re-parse) now falls back to the fast model if the higher-tier one hits a billing/quota limit, instead of failing outright",
+  ]},
   { v:"2.73", title:"Throttle Fix Images to space out social requests", items:[
     "Fix Images now pauses briefly between each Instagram/TikTok photo upgrade instead of firing them back-to-back",
   ]},

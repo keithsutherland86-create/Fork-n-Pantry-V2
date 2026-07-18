@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.75";
+const APP_VERSION = "2.76";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.76", title:"Cook timers survive locking your phone", items:[
+    "Timers now track real elapsed time instead of a tick count, so the countdown is always accurate the moment you reopen the app — no more drifting or getting stuck while your screen was locked",
+  ]},
   { v:"2.75", title:"Fix AI Refresh 'invalid budget' error", items:[
     "The deep-parse model requires thinking mode enabled — AI Refresh no longer disables it, fixing a hard failure now that billing is on",
   ]},
@@ -823,16 +826,22 @@ function CookMode({recipe,onClose,servings,base,unit="original"}){
     },800);
     return()=>clearInterval(iv);
   },[voiceActive]);
+  // End-time based (not a decrementing tick count) so the countdown is always correct the
+  // instant the app regains focus, even after the screen locked or the tab was backgrounded
+  // long enough for setInterval to be throttled or suspended by the OS.
   useEffect(()=>{
-    if(timer?.running){
-      timerRef.current=setInterval(()=>setTimer(t=>{
-        if(!t||t.secs<=0){clearInterval(timerRef.current);return t?{...t,secs:0,running:false}:null;}
-        return{...t,secs:t.secs-1};
-      }),1000);
-    } else clearInterval(timerRef.current);
-    return()=>clearInterval(timerRef.current);
-  },[timer?.running]);
-  function startTimer(label,str){const s=parseTimeSecs(str);if(s){clearInterval(timerRef.current);setTimer({label,total:s,secs:s,running:true});}}
+    if(!timer?.running){clearInterval(timerRef.current);return;}
+    const tick=()=>setTimer(t=>{
+      if(!t||!t.running)return t;
+      const secs=Math.max(0,Math.round((t.endAt-Date.now())/1000));
+      return secs<=0?{...t,secs:0,running:false}:{...t,secs};
+    });
+    tick();
+    timerRef.current=setInterval(tick,1000);
+    document.addEventListener("visibilitychange",tick);
+    return()=>{clearInterval(timerRef.current);document.removeEventListener("visibilitychange",tick);};
+  },[timer?.running,timer?.endAt]);
+  function startTimer(label,str){const s=parseTimeSecs(str);if(s){clearInterval(timerRef.current);setTimer({label,total:s,secs:s,endAt:Date.now()+s*1000,running:true});}}
   if(total===0)return null;
   const pct=Math.round((step/total)*100);
   const hasStr=ings.length>0&&typeof ings[0]==="object";
@@ -882,7 +891,7 @@ function CookMode({recipe,onClose,servings,base,unit="original"}){
         <div style={{background:timer.secs===0?"#7F1D1D":timer.secs<30?"#78350F":"rgba(74,154,114,.25)",border:"1px solid rgba(255,255,255,.15)",margin:"0 16px",borderRadius:"var(--r-md)",padding:"10px 14px",display:"flex",alignItems:"center",gap:10,flexShrink:0,position:"relative",zIndex:1}}>
           <span style={{fontSize:12,fontWeight:600,color:"rgba(255,255,255,.8)",flex:1}}>{timer.secs===0?"⏰ Time's up!":timer.label}</span>
           <span style={{fontFamily:"monospace",fontSize:22,fontWeight:700,color:"#fff",minWidth:52,textAlign:"center"}}>{fmtTime(timer.secs)}</span>
-          {timer.secs>0&&<button onClick={()=>setTimer(t=>({...t,running:!t.running}))} style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:20,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>{timer.running?"Pause":"Resume"}</button>}
+          {timer.secs>0&&<button onClick={()=>setTimer(t=>t.running?{...t,running:false}:{...t,running:true,endAt:Date.now()+t.secs*1000})} style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:20,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>{timer.running?"Pause":"Resume"}</button>}
           <button onClick={()=>{clearInterval(timerRef.current);setTimer(null);}} style={{background:"none",border:"none",color:"rgba(255,255,255,.6)",fontSize:20,cursor:"pointer",lineHeight:1}}>×</button>
         </div>
       )}
@@ -1172,15 +1181,20 @@ function RecipeModal({recipe,onClose,onUpdate,books=[],onToggleBook,onCreateBook
   // race where React's effect scheduling leaves the stack empty between presses.
   useBackHandler(!!recipe, onClose);
 
+  // End-time based — see CookMode's identical timer effect for why (survives the screen
+  // locking or the tab backgrounding, which pauses/throttles setInterval).
   useEffect(()=>{
-    if(timer?.running){
-      timerRef.current=setInterval(()=>setTimer(t=>{
-        if(!t||t.secs<=0){clearInterval(timerRef.current);return t?{...t,secs:0,running:false}:null;}
-        return{...t,secs:t.secs-1};
-      }),1000);
-    } else clearInterval(timerRef.current);
-    return()=>clearInterval(timerRef.current);
-  },[timer?.running]);
+    if(!timer?.running){clearInterval(timerRef.current);return;}
+    const tick=()=>setTimer(t=>{
+      if(!t||!t.running)return t;
+      const secs=Math.max(0,Math.round((t.endAt-Date.now())/1000));
+      return secs<=0?{...t,secs:0,running:false}:{...t,secs};
+    });
+    tick();
+    timerRef.current=setInterval(tick,1000);
+    document.addEventListener("visibilitychange",tick);
+    return()=>{clearInterval(timerRef.current);document.removeEventListener("visibilitychange",tick);};
+  },[timer?.running,timer?.endAt]);
 
   if(!recipe||servings===null)return null;
   if(cookMode)return <CookMode recipe={recipe} onClose={()=>setCookMode(false)} servings={servings} base={recipe.servings||4} unit={unit}/>;
@@ -1188,7 +1202,7 @@ function RecipeModal({recipe,onClose,onUpdate,books=[],onToggleBook,onCreateBook
   const base=recipe.servings||4, scale=servings/base;
   const hasStr=recipe.ingredients?.length>0&&typeof recipe.ingredients[0]==="object";
 
-  function startTimer(label,str){const s=parseTimeSecs(str);if(s){clearInterval(timerRef.current);setTimer({label,total:s,secs:s,running:true});}}
+  function startTimer(label,str){const s=parseTimeSecs(str);if(s){clearInterval(timerRef.current);setTimer({label,total:s,secs:s,endAt:Date.now()+s*1000,running:true});}}
   function toggleIng(i){setCheckedIngs(s=>{const n=new Set(s);n.has(i)?n.delete(i):n.add(i);return n;});}
   const btnGlass={background:"rgba(15,24,17,.5)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,.25)",color:"#fff",cursor:"pointer"};
 
@@ -1241,7 +1255,7 @@ function RecipeModal({recipe,onClose,onUpdate,books=[],onToggleBook,onCreateBook
           <div style={{background:timer.secs===0?"#FEE2E2":timer.secs<30?"#FEF3C7":"var(--forest)",color:timer.secs===0?"#991B1B":timer.secs<30?"#92400E":"#fff",padding:"11px 18px",display:"flex",alignItems:"center",gap:10,transition:"background .5s"}}>
             <span style={{fontSize:13,fontWeight:600,flex:1}}>{timer.secs===0?"⏰ Time's up!":timer.label+" timer"}</span>
             <span style={{fontFamily:"monospace",fontSize:20,fontWeight:700,letterSpacing:"0.05em",minWidth:52,textAlign:"center"}}>{fmtTime(timer.secs)}</span>
-            {timer.secs>0&&<button onClick={()=>setTimer(t=>({...t,running:!t.running}))} style={{background:"rgba(255,255,255,.2)",border:"none",color:"inherit",borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>{timer.running?"Pause":"Resume"}</button>}
+            {timer.secs>0&&<button onClick={()=>setTimer(t=>t.running?{...t,running:false}:{...t,running:true,endAt:Date.now()+t.secs*1000})} style={{background:"rgba(255,255,255,.2)",border:"none",color:"inherit",borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>{timer.running?"Pause":"Resume"}</button>}
             <button onClick={()=>{clearInterval(timerRef.current);setTimer(null);}} style={{background:"none",border:"none",color:"inherit",fontSize:20,cursor:"pointer",lineHeight:1,opacity:.7}}>×</button>
           </div>
         )}

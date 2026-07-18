@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.71";
+const APP_VERSION = "2.72";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.72", title:"Warn about unprotected recipe photos", items:[
+    "Settings now flags recipes still relying on a source (Instagram/TikTok) link that could expire, so you notice before the photo silently reverts to an emoji",
+  ]},
   { v:"2.71", title:"Switched AI recipe parsing to Google Gemini", items:[
     "Recipe import and nutrition scanning now run on Google's Gemini API instead of Anthropic",
   ]},
@@ -2637,6 +2640,9 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onR
   const[importLog,setImportLog]=useState([]);
   const importRef=useRef(null);
   const fixing=!!fixProgress?.running;
+  // Recipes still sitting on a raw source CDN link (not yet re-hosted to Supabase) — those
+  // links can expire/rot at any time, so flag them without spending any Apify credit to check.
+  const unprotectedCount=recipes.filter(r=>r.ogImage&&!r.ogImage.includes("supabase.co")&&/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(r.url||"")).length;
 
   // Refresh the import-failure log whenever the diagnostics panel is opened
   useEffect(()=>{ if(showDiag){try{setImportLog(JSON.parse(localStorage.getItem("fnp_import_log")||"[]"));}catch{setImportLog([]);}} },[showDiag]);
@@ -2793,6 +2799,11 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onR
               <div style={{flex:1}}>
                 <div style={label}>Fix Recipe Images</div>
                 <div style={sub}>Re-download &amp; permanently store photos, and pull sharper images for Instagram/TikTok recipes</div>
+                {!fixing&&unprotectedCount>0&&(
+                  <div style={{fontSize:11,color:"#B45309",marginTop:4,fontWeight:600}}>
+                    ⚠ {unprotectedCount} recipe{unprotectedCount===1?"":"s"} still on a source link that could expire — run Fix Images to secure {unprotectedCount===1?"it":"them"}
+                  </div>
+                )}
                 {fixProgress&&(()=>{
                   const p=fixProgress,pct=p.total?Math.round((p.done/p.total)*100):0;
                   return(

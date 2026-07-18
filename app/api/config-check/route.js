@@ -3,7 +3,7 @@
 // the import/hosting keys are wired up in Vercel.
 export async function GET() {
   return Response.json({
-    anthropic:          !!process.env.ANTHROPIC_API_KEY,
+    google:             !!process.env.GEMINI_API_KEY,
     apify:              !!process.env.APIFY_TOKEN,
     supabaseUrl:        !!process.env.NEXT_PUBLIC_SUPABASE_URL,
     supabaseAnon:       !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,

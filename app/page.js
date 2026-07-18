@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.70";
+const APP_VERSION = "2.71";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.71", title:"Switched AI recipe parsing to Google Gemini", items:[
+    "Recipe import and nutrition scanning now run on Google's Gemini API instead of Anthropic",
+  ]},
   { v:"2.70", title:"Fix recipe grid overflowing off-screen", items:[
     "A long recipe source name could stretch a grid column past the edge of the screen — fixed",
   ]},
@@ -2860,7 +2863,7 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onR
               {cfg?.error&&<div style={{fontSize:13,color:"#B91C1C"}}>Couldn't reach the server.</div>}
               {cfg&&!cfg.error&&(()=>{
                 const rows=[
-                  ["AI parsing (Anthropic)",cfg.anthropic,true],
+                  ["AI parsing (Google)",cfg.google,true],
                   ["Cloud sync (Supabase)",cfg.supabaseUrl&&cfg.supabaseAnon,true],
                   ["Social scraper (Apify)",cfg.apify,false],
                   ["Permanent photos (Supabase key)",cfg.supabaseServiceKey,false],

@@ -79,6 +79,25 @@ function findRecipeLinkInText(text) {
   return "";
 }
 
+// Calls Gemini's generateContent endpoint and returns the final-answer text (skipping any
+// "thought" trace parts that reasoning models like gemini-pro-latest emit alongside the answer).
+async function callGemini(model, parts, maxTokens) {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts }],
+      generationConfig: { maxOutputTokens: maxTokens, thinkingConfig: { thinkingBudget: 0 } },
+    }),
+  });
+  const data = await res.json();
+  const text = (data.candidates?.[0]?.content?.parts || [])
+    .filter(p => p.text && !p.thought)
+    .map(p => p.text)
+    .join("");
+  return { ok: res.ok && !data.error, data, text };
+}
+
 async function fetchHtml(url, timeout = 7000) {
   const agents = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1",
@@ -101,20 +120,14 @@ export async function POST(req) {
 
   // ── Nutrition scan mode ───────────────────────────────────────────────────────
   if (mode === "nutrition" && imageBase64) {
-    const msgContent = [
-      { type:"image", source:{ type:"base64", media_type:imageMediaType, data:imageBase64 } },
-      { type:"text", text:`Look at this image of ingredients/food. List what you can see and estimate the total nutrition.\nReturn ONLY raw JSON, no markdown:\n{"ingredients": ["2 chicken breasts", "1 cup rice"], "nutrition": {"calories": 450, "protein": 35, "carbs": 60, "fat": 8}, "summary": "Grilled chicken with rice"}` }
+    const parts = [
+      { inline_data:{ mime_type:imageMediaType, data:imageBase64 } },
+      { text:`Look at this image of ingredients/food. List what you can see and estimate the total nutrition.\nReturn ONLY raw JSON, no markdown:\n{"ingredients": ["2 chicken breasts", "1 cup rice"], "nutrition": {"calories": 450, "protein": 35, "carbs": 60, "fat": 8}, "summary": "Grilled chicken with rice"}` }
     ];
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json", "x-api-key":process.env.ANTHROPIC_API_KEY, "anthropic-version":"2023-06-01" },
-      body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:600, messages:[{ role:"user", content:msgContent }] }),
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) return Response.json({ ok:false, error:"API error" }, { status:500 });
-    const text = data.content?.find(b=>b.type==="text")?.text || "{}";
+    const { ok, text } = await callGemini("gemini-flash-latest", parts, 600);
+    if (!ok) return Response.json({ ok:false, error:"API error" }, { status:500 });
     try {
-      const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
+      const parsed = JSON.parse((text||"{}").replace(/```json|```/g,"").trim());
       return Response.json({ ok:true, mode:"nutrition", ...parsed });
     } catch {
       return Response.json({ ok:false, error:"Parse failed" }, { status:422 });
@@ -258,32 +271,26 @@ Dig deeper into the content below. Infer and reconstruct ingredients and steps f
     ? `${deepPrefix}Extract a COMPLETE recipe from this content. Be exhaustive — infer missing details from context. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`
     : `Extract recipe details from this content. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`;
 
-  const msgContent = imageBase64
+  const parts = imageBase64
     ? [
-        { type:"image", source:{ type:"base64", media_type:imageMediaType, data:imageBase64 } },
-        { type:"text", text:`Extract recipe details from this image. Return ONLY raw JSON, no markdown:\n\n${schema}\n\n${rules}` }
+        { inline_data:{ mime_type:imageMediaType, data:imageBase64 } },
+        { text:`Extract recipe details from this image. Return ONLY raw JSON, no markdown:\n\n${schema}\n\n${rules}` }
       ]
-    : [{ type:"text", text:prompt }];
+    : [{ text:prompt }];
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method:"POST",
-    headers:{ "Content-Type":"application/json", "x-api-key":process.env.ANTHROPIC_API_KEY, "anthropic-version":"2023-06-01" },
-    body: JSON.stringify({
-      model: isDeep ? "claude-sonnet-4-6" : "claude-haiku-4-5-20251001",
-      max_tokens: isDeep ? 3000 : 1400,
-      messages:[{ role:"user", content:msgContent }]
-    }),
-  });
+  const { ok, data, text } = await callGemini(
+    isDeep ? "gemini-pro-latest" : "gemini-flash-latest",
+    parts,
+    isDeep ? 4000 : 2200
+  );
 
-  const data = await res.json();
-  if(!res.ok || data.error) {
-    console.error("Claude API error:", JSON.stringify(data));
+  if(!ok) {
+    console.error("Gemini API error:", JSON.stringify(data));
     return Response.json({ ok:false, error: data.error?.message || "API error" }, { status:500 });
   }
-  const text = data.content?.find(b=>b.type==="text")?.text || "";
-  // No text came back (e.g. only a non-text block, or hit max_tokens before any output)
+  // No text came back (e.g. only a non-text block, or hit max token limit before any output)
   if(!text.trim()){
-    console.error("Claude returned no text. stop_reason:", data.stop_reason, "content:", JSON.stringify(data.content));
+    console.error("Gemini returned no text. finishReason:", data.candidates?.[0]?.finishReason, "content:", JSON.stringify(data.candidates));
     const suffix = (robust && apifyReason) ? ` [${apifyReason}]` : "";
     const msg = isSocial
       ? "Instagram/TikTok didn't share this post's caption. Open the post, copy its full caption text, and paste that here instead of the link." + suffix

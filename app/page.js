@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.74";
+const APP_VERSION = "2.75";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.75", title:"Fix AI Refresh 'invalid budget' error", items:[
+    "The deep-parse model requires thinking mode enabled — AI Refresh no longer disables it, fixing a hard failure now that billing is on",
+  ]},
   { v:"2.74", title:"Fix AI Refresh failing on quota errors", items:[
     "AI Refresh (deep re-parse) now falls back to the fast model if the higher-tier one hits a billing/quota limit, instead of failing outright",
   ]},

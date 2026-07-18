@@ -81,13 +81,17 @@ function findRecipeLinkInText(text) {
 
 // Calls Gemini's generateContent endpoint and returns the final-answer text (skipping any
 // "thought" trace parts that reasoning models like gemini-pro-latest emit alongside the answer).
+// The pro model requires thinking mode (thinkingBudget:0 is rejected as invalid) — only flash
+// supports disabling it, so gate the override to models that can actually take it.
 async function callGemini(model, parts, maxTokens) {
+  const generationConfig = { maxOutputTokens: maxTokens };
+  if (model.includes("flash")) generationConfig.thinkingConfig = { thinkingBudget: 0 };
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
     body: JSON.stringify({
       contents: [{ role: "user", parts }],
-      generationConfig: { maxOutputTokens: maxTokens, thinkingConfig: { thinkingBudget: 0 } },
+      generationConfig,
     }),
   });
   const data = await res.json();

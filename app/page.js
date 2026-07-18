@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.72";
+const APP_VERSION = "2.73";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.73", title:"Throttle Fix Images to space out social requests", items:[
+    "Fix Images now pauses briefly between each Instagram/TikTok photo upgrade instead of firing them back-to-back",
+  ]},
   { v:"2.72", title:"Warn about unprotected recipe photos", items:[
     "Settings now flags recipes still relying on a source (Instagram/TikTok) link that could expire, so you notice before the photo silently reverts to an emoji",
   ]},
@@ -3696,6 +3699,10 @@ function AppInner(){
       // force re-attempts regardless (used to redo images from earlier buggy runs).
       if(isSocial&&(force||!r.imgEnriched)){
         try{
+          // Space out real requests to Instagram/TikTok's scraper — a tight back-to-back loop
+          // of automated social-platform fetches is the kind of pattern that reads as scraping
+          // abuse, even though this is a one-off user-triggered maintenance run.
+          if(enrichTried>0)await new Promise(res=>setTimeout(res,1500));
           enrichTried++;
           const res=await fetch("/api/enrich-image",{method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({url:r.url,recipeId:r.id,userId:uid})});

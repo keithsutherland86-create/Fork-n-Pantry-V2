@@ -80,18 +80,18 @@ function findRecipeLinkInText(text) {
 }
 
 // Calls Gemini's generateContent endpoint and returns the final-answer text (skipping any
-// "thought" trace parts that reasoning models like gemini-pro-latest emit alongside the answer).
-// The pro model requires thinking mode (thinkingBudget:0 is rejected as invalid) — only flash
-// supports disabling it, so gate the override to models that can actually take it.
+// "thought" trace parts that reasoning models emit alongside the answer). Deliberately does NOT
+// set thinkingConfig — both the "flash" and "pro" latest-alias models have, at different times,
+// rejected thinkingBudget:0 as invalid once the alias rolled to a newer model version that
+// requires thinking. Rather than chase that per-model-version churn, just let thinking run and
+// filter its output out below.
 async function callGemini(model, parts, maxTokens) {
-  const generationConfig = { maxOutputTokens: maxTokens };
-  if (model.includes("flash")) generationConfig.thinkingConfig = { thinkingBudget: 0 };
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
     body: JSON.stringify({
       contents: [{ role: "user", parts }],
-      generationConfig,
+      generationConfig: { maxOutputTokens: maxTokens },
     }),
   });
   const data = await res.json();

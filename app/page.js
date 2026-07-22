@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.76";
+const APP_VERSION = "2.77";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.77", title:"Fix AI import failing with 'invalid argument'", items:[
+    "Removed a Gemini setting that the flash model started rejecting after a model-version update, which was breaking every import",
+  ]},
   { v:"2.76", title:"Cook timers survive locking your phone", items:[
     "Timers now track real elapsed time instead of a tick count, so the countdown is always accurate the moment you reopen the app — no more drifting or getting stuck while your screen was locked",
   ]},

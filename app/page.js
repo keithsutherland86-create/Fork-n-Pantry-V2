@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.77";
+const APP_VERSION = "2.78";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.78", title:"Recipe photos now cache properly for offline/slow connections", items:[
+    "Fixed a gap where recipe images never got cached like the rest of the app, causing a slow re-download every time on a poor connection — they now load instantly after the first view",
+  ]},
   { v:"2.77", title:"Fix AI import failing with 'invalid argument'", items:[
     "Removed a Gemini setting that the flash model started rejecting after a model-version update, which was breaking every import",
   ]},

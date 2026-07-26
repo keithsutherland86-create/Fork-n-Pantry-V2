@@ -28,15 +28,18 @@ self.addEventListener("fetch", e => {
 
   // Only handle our own origin; let everything cross-origin go straight to network
   if (url.origin !== self.location.origin) return;
-  // Never touch API calls (parse/AI) or Next.js data/RSC requests — these MUST be live,
-  // and caching RSC payloads is what breaks the app after a new deploy.
-  if (url.pathname.startsWith("/api/")) return;
+
+  // Never touch API calls (parse/AI) or Next.js data/RSC requests — these MUST be live, and
+  // caching RSC payloads is what breaks the app after a new deploy. /api/img is the one
+  // exception: recipe photos proxy through it, and are stable once fetched — falls through
+  // to the cache-first image branch below instead of being excluded here.
+  if (url.pathname.startsWith("/api/") && url.pathname !== "/api/img") return;
   if (url.pathname.startsWith("/_next/data/")) return;
   if (url.searchParams.has("_rsc")) return;
   if (e.request.headers.get("RSC") === "1" || e.request.headers.get("Next-Router-Prefetch")) return;
 
   // Images & icons: cache-first (big, stable once uploaded — gives offline image loading)
-  if (url.pathname.match(/\.(png|jpg|jpeg|webp|gif|ico|svg)$/)) {
+  if (url.pathname.match(/\.(png|jpg|jpeg|webp|gif|ico|svg)$/) || url.pathname === "/api/img") {
     e.respondWith(
       caches.open(IMG_CACHE).then(cache =>
         cache.match(e.request).then(hit => {

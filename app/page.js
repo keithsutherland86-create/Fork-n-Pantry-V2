@@ -5,10 +5,13 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.78";
+const APP_VERSION = "2.79";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.79", title:"Fix unreliable imports failing with 'Parse failed'", items:[
+    "The AI's internal reasoning was eating the whole response budget on longer recipes, cutting the result off mid-way — imports should now be consistently reliable",
+  ]},
   { v:"2.78", title:"Recipe photos now cache properly for offline/slow connections", items:[
     "Fixed a gap where recipe images never got cached like the rest of the app, causing a slow re-download every time on a poor connection — they now load instantly after the first view",
   ]},

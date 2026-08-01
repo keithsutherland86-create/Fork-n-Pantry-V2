@@ -80,18 +80,19 @@ function findRecipeLinkInText(text) {
 }
 
 // Calls Gemini's generateContent endpoint and returns the final-answer text (skipping any
-// "thought" trace parts that reasoning models emit alongside the answer). Deliberately does NOT
-// set thinkingConfig — both the "flash" and "pro" latest-alias models have, at different times,
-// rejected thinkingBudget:0 as invalid once the alias rolled to a newer model version that
-// requires thinking. Rather than chase that per-model-version churn, just let thinking run and
-// filter its output out below.
-async function callGemini(model, parts, maxTokens) {
+// "thought" trace parts that reasoning models emit alongside the answer).
+//
+// Thinking tokens count against maxOutputTokens, so an uncapped thinking pass can eat the whole
+// budget and truncate the JSON mid-object (seen in the wild: 2108 of 2200 tokens spent thinking,
+// leaving 88 for the answer). Cap it with an explicit budget and leave generous headroom for the
+// answer itself. The budget must be non-zero — these models reject thinkingBudget:0 outright.
+async function callGemini(model, parts, maxTokens, thinkingBudget = 512) {
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
     body: JSON.stringify({
       contents: [{ role: "user", parts }],
-      generationConfig: { maxOutputTokens: maxTokens },
+      generationConfig: { maxOutputTokens: maxTokens, thinkingConfig: { thinkingBudget } },
     }),
   });
   const data = await res.json();
@@ -128,7 +129,7 @@ export async function POST(req) {
       { inline_data:{ mime_type:imageMediaType, data:imageBase64 } },
       { text:`Look at this image of ingredients/food. List what you can see and estimate the total nutrition.\nReturn ONLY raw JSON, no markdown:\n{"ingredients": ["2 chicken breasts", "1 cup rice"], "nutrition": {"calories": 450, "protein": 35, "carbs": 60, "fat": 8}, "summary": "Grilled chicken with rice"}` }
     ];
-    const { ok, text } = await callGemini("gemini-flash-latest", parts, 600);
+    const { ok, text } = await callGemini("gemini-flash-latest", parts, 3000, 512);
     if (!ok) return Response.json({ ok:false, error:"API error" }, { status:500 });
     try {
       const parsed = JSON.parse((text||"{}").replace(/```json|```/g,"").trim());
@@ -285,12 +286,13 @@ Dig deeper into the content below. Infer and reconstruct ingredients and steps f
   let { ok, data, text, quotaExceeded } = await callGemini(
     isDeep ? "gemini-pro-latest" : "gemini-flash-latest",
     parts,
-    isDeep ? 4000 : 2200
+    isDeep ? 12000 : 6000,
+    isDeep ? 2048 : 1024
   );
   // The pro model requires a billed account (0 free-tier quota) — fall back to flash rather
   // than hard-failing "AI Refresh" for keys without billing enabled.
   if (!ok && isDeep && quotaExceeded) {
-    ({ ok, data, text } = await callGemini("gemini-flash-latest", parts, 2200));
+    ({ ok, data, text } = await callGemini("gemini-flash-latest", parts, 6000, 1024));
   }
 
   if(!ok) {
@@ -391,6 +393,9 @@ Dig deeper into the content below. Infer and reconstruct ingredients and steps f
 
     return Response.json({ ok:true, recipe:parsed, ogImage:finalImage });
   } catch {
+    // A truncated response is the usual cause here — log the finish reason so a recurrence is
+    // diagnosable from the Vercel logs without needing to reproduce it locally.
+    console.error("Parse failed. finishReason:", data.candidates?.[0]?.finishReason, "usage:", JSON.stringify(data.usageMetadata));
     return Response.json({ ok:false, error:"Parse failed" }, { status:422 });
   }
 }

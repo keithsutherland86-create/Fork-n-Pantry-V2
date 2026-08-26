@@ -52,3 +52,22 @@ cp .env.example .env.local
 npm run dev
 ```
 Then open http://localhost:3000
+
+## Keeping Supabase awake (free tier)
+
+Free Supabase projects pause after **7 days with no database activity**, and a paused project
+can only be unpaused from the dashboard within 90 days. Shared cookbooks stop syncing when
+that happens — the rest of the app keeps working, since recipes live on the device.
+
+This repo pings the database on a schedule so it never goes idle:
+
+- **Vercel Cron** (`vercel.json`) hits `/api/keepalive` once a day. Nothing to configure —
+  it starts working on the next deploy.
+- **GitHub Actions** (`.github/workflows/supabase-keepalive.yml`) does the same every 3 days
+  as a backup, in case a deploy breaks. Set a repo variable `APP_URL` to your Vercel URL
+  (Settings → Secrets and variables → Actions → Variables) to enable it.
+
+Check it by hand any time: `https://<your-app>/api/keepalive` → `{"ok":true,...}`.
+
+Optional: set `KEEPALIVE_SECRET` in Vercel to lock the endpoint down, and add the same value
+as a GitHub Actions secret of the same name.

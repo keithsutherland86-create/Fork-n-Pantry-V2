@@ -1,0 +1,44 @@
+# Backup pinger for the Supabase free-tier auto-pause (7 days of inactivity → paused).
+#
+# The primary ping is Vercel Cron (see vercel.json). This workflow exists so a broken or
+# rolled-back deployment can't quietly let the database lapse.
+#
+# Setup — one repo variable, no secrets needed:
+#   Settings → Secrets and variables → Actions → Variables → New repository variable
+#     Name:  APP_URL     Value: https://your-app.vercel.app
+#   If KEEPALIVE_SECRET is set in Vercel, add the same value as a repo *secret* named
+#   KEEPALIVE_SECRET so this job can authenticate.
+#
+# Note: GitHub disables scheduled workflows in a repo with no commits for 60 days (it emails
+# first). This repo is committed to regularly, so that shouldn't bite.
+
+name: Supabase keepalive
+
+on:
+  schedule:
+    - cron: "0 7 */3 * *" # every 3 days, 07:00 UTC
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/keepalive
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+          KEEPALIVE_SECRET: ${{ secrets.KEEPALIVE_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "APP_URL repo variable is not set — see the comment at the top of this file."
+            exit 1
+          fi
+          auth=()
+          [ -n "$KEEPALIVE_SECRET" ] && auth=(-H "Authorization: Bearer $KEEPALIVE_SECRET")
+          for attempt in 1 2 3; do
+            code=$(curl -sS -o /tmp/out.txt -w '%{http_code}' --max-time 30 "${auth[@]}" "${APP_URL%/}/api/keepalive") || code=000
+            echo "attempt $attempt → HTTP $code: $(cat /tmp/out.txt)"
+            [ "$code" = "200" ] && exit 0
+            sleep $((attempt * 5))
+          done
+          echo "Keepalive failed — the Supabase project may pause after 7 days."
+          exit 1

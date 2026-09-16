@@ -5,10 +5,15 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.79";
+const APP_VERSION = "2.80";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.80", title:"Fix Images now repairs photos it used to call 'already OK'", items:[
+    "Fix Images checked whether a photo's address looked right, not whether the photo actually loaded — so a lost photo was reported as fine and never repaired, no matter how many times you ran it",
+    "It now loads each stored photo to confirm it really works, and re-fetches the ones that don't",
+    "The summary no longer counts broken or photo-less recipes as 'already OK'",
+  ]},
   { v:"2.79", title:"Fix unreliable imports failing with 'Parse failed'", items:[
     "The AI's internal reasoning was eating the whole response budget on longer recipes, cutting the result off mid-way — imports should now be consistently reliable",
   ]},
@@ -358,6 +363,21 @@ function Logo({size=34}){
 function pImg(url){
   if(!url||url.startsWith("data:")||url.startsWith("/"))return url;
   return`/api/img?url=${encodeURIComponent(url)}`;
+}
+
+// Does this image actually load? A stored URL can look perfectly valid as a string while the
+// object behind it is gone — only a real load tells the truth. Resolves true (loads), false
+// (definitively broken), or null (timed out → unknown, so callers can leave it alone rather
+// than replace a photo that was merely slow).
+function imageLoads(url,timeout=10000){
+  return new Promise(resolve=>{
+    const im=new Image();
+    const done=v=>{clearTimeout(t);im.onload=im.onerror=null;resolve(v);};
+    const t=setTimeout(()=>done(null),timeout);
+    im.onload=()=>done(im.naturalWidth>0);
+    im.onerror=()=>done(false);
+    im.src=url;
+  });
 }
 
 // ─── Recipe image ─────────────────────────────────────────────────────────────
@@ -2851,6 +2871,7 @@ function SettingsTab({session,onSignIn,onSignOut,syncStatus,recipes,onImport,onR
                         <span style={{color:"#15803D",fontWeight:700}}>✓ {p.fixed||0} restored</span>
                         <span style={{color:"var(--mist)"}}>— {p.skipped||0} already OK</span>
                         {(p.failed>0)&&<span style={{color:"#B91C1C",fontWeight:700}}>✗ {p.failed} failed</span>}
+                        {(p.noImage>0)&&<span style={{color:"var(--mist)"}}>🍽️ {p.noImage} no photo</span>}
                       </div>
                       {p.running&&p.current&&<div style={{fontSize:11,color:"var(--mist)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Last: {p.current}</div>}
                       {/* Photo-upgrade (Apify) diagnostics */}
@@ -3718,9 +3739,9 @@ function AppInner(){
   async function fixAllImages(onProgress,force){
     if(!session?.user?.id)return{fixed:0,failed:0,total:0};
     const uid=session.user.id;
-    let fixed=0,failed=0,skipped=0,done=0,lastErr="",upgraded=0,enrichTried=0,enrichReason="";
+    let fixed=0,failed=0,skipped=0,noImage=0,done=0,lastErr="",upgraded=0,enrichTried=0,enrichReason="";
     const total=recipes.length;
-    const report=current=>{done++;onProgress&&onProgress({done,total,fixed,failed,skipped,current,upgraded,enrichTried,enrichReason});};
+    const report=current=>{done++;onProgress&&onProgress({done,total,fixed,failed,skipped,noImage,current,upgraded,enrichTried,enrichReason});};
     for(const r of recipes){
       const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(r.url||"");
       // Social posts: upgrade to the full-res Apify image once (even if already hosted).
@@ -3745,10 +3766,22 @@ function AppInner(){
           if(data&&data.reason)enrichReason=data.reason;
         }catch(e){enrichReason="request-failed";}
       }
-      // Already permanent — nothing to do
-      if(r.ogImage&&r.ogImage.includes("supabase.co")){skipped++;report(r.title);continue;}
+      // Already permanent — but verify it STILL LOADS rather than trusting the URL string.
+      // A Supabase object that has gone missing leaves a URL that still looks valid, so the
+      // old string-only check reported those "already OK" on every later run and never
+      // repaired them — the reason images stayed missing no matter how often Fix Images ran.
+      // Re-check once on failure so a flaky load doesn't trigger a needless re-parse; a
+      // timeout stays "unknown" and is left alone.
+      let deadPermanent=false;
+      if(r.ogImage&&r.ogImage.includes("supabase.co")){
+        let alive=await imageLoads(pImg(r.ogImage));
+        if(alive===false)alive=await imageLoads(pImg(r.ogImage));
+        if(alive!==false){skipped++;report(r.title);continue;}
+        deadPermanent=true;
+      }
       const onErr=msg=>{lastErr=msg;};
-      let stored=r.ogImage?await storeImagePermanently(r.ogImage,r.id,uid,onErr):"";
+      // A dead Supabase copy is useless as a source — skip straight to re-fetching the origin
+      let stored=(!deadPermanent&&r.ogImage)?await storeImagePermanently(r.ogImage,r.id,uid,onErr):"";
       // If the current URL was dead (still not on supabase) try re-parsing the source for a fresh image
       if((!stored||!stored.includes("supabase.co"))&&r.url){
         try{
@@ -3757,19 +3790,26 @@ function AppInner(){
           if(data.ok&&data.ogImage)stored=await storeImagePermanently(data.ogImage,r.id,uid,onErr);
         }catch{}
       }
-      if(stored&&stored!==r.ogImage&&stored.includes("supabase.co")){
-        const updated={...r,ogImage:stored};
+      if(stored&&stored.includes("supabase.co")&&(stored!==r.ogImage||deadPermanent)){
+        // Repairing a dead copy re-uploads to the same storage path, so the URL comes back
+        // identical to the broken one — cache-bust it, or the browser and service worker would
+        // keep serving the failed response they already have for that exact URL.
+        const finalUrl=deadPermanent?`${stored.split("?")[0]}?v=${Date.now()}`:stored;
+        const updated={...r,ogImage:finalUrl};
         setRecipes(prev=>{const u=prev.map(x=>x.id===updated.id?updated:x);save(KEYS.r,u);return u;});
         cloudUpsert(updated,uid);
         fixed++;
-      } else if(r.ogImage&&!r.ogImage.includes("supabase.co")){
+      } else if(r.ogImage||deadPermanent){
+        // Had a photo (or a permanent copy that turned out to be dead) and couldn't repair it —
+        // that's a failure, not an "already OK". Counting these as skipped is what made a run
+        // over broken recipes report a clean bill of health.
         failed++;
       } else {
-        skipped++;
+        noImage++;
       }
       report(r.title);
     }
-    return{fixed,failed,skipped,total,lastErr,upgraded,enrichTried,enrichReason};
+    return{fixed,failed,skipped,noImage,total,lastErr,upgraded,enrichTried,enrichReason};
   }
 
   // App-level so the run survives leaving the Settings screen (SettingsTab unmounting).
@@ -3777,7 +3817,7 @@ function AppInner(){
     if(fixProgress?.running)return;
     setFixProgress({running:true,done:0,total:recipes.length,fixed:0,failed:0,skipped:0,current:""});
     const res=await fixAllImages(p=>setFixProgress({running:true,...p}),force);
-    setFixProgress({running:false,done:res.total,total:res.total,fixed:res.fixed,failed:res.failed,skipped:res.skipped,lastErr:res.lastErr,upgraded:res.upgraded,enrichTried:res.enrichTried,enrichReason:res.enrichReason});
+    setFixProgress({running:false,done:res.total,total:res.total,fixed:res.fixed,failed:res.failed,skipped:res.skipped,noImage:res.noImage,lastErr:res.lastErr,upgraded:res.upgraded,enrichTried:res.enrichTried,enrichReason:res.enrichReason});
   }
 
   // Keep the screen awake while the (potentially long) image fix runs; release when done.

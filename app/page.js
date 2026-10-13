@@ -5,10 +5,16 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.80";
+const APP_VERSION = "2.81";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.81", title:"No more invented ingredients and steps", major:true, items:[
+    "When a link couldn't be read, the AI was still asked to produce a full recipe — so it filled in the blanks with plausible-sounding ingredients and method steps that were never in the post",
+    "It's now told to use only what the content actually says, and to say so when there's no real recipe there, rather than inventing one",
+    "A link that can't be read now fails honestly instead of saving a made-up recipe",
+    "Imports that only partly worked now keep just the real detail — a short accurate recipe instead of a padded one",
+  ]},
   { v:"2.80", title:"Fix Images now repairs photos it used to call 'already OK'", items:[
     "Fix Images checked whether a photo's address looked right, not whether the photo actually loaded — so a lost photo was reported as fine and never repaired, no matter how many times you ran it",
     "It now loads each stored photo to confirm it really works, and re-fetches the ones that don't",

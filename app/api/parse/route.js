@@ -4,6 +4,8 @@ import { fetchViaApify } from "../../../lib/social";
 // killed mid-request on the escalated social import.
 export const maxDuration = 60;
 
+const SOCIAL_NO_CAPTION = "Instagram/TikTok didn't share this post's caption. Open the post, copy its full caption text, and paste that here instead of the link.";
+
 // Pull og:image, og:title and a clean recipe text summary (from JSON-LD if present) out of a page's HTML
 function extractFromHtml(html, fallbackTitle = "") {
   let ogImage = "", ogTitle = fallbackTitle, pageText = "", hasRecipeLd = false;
@@ -234,6 +236,17 @@ export async function POST(req) {
     }
   }
 
+  // Nothing was actually retrieved from the link. Handing the model a bare URL and asking it to
+  // "extract recipe details" is what makes it invent a plausible recipe out of thin air — it has
+  // nothing to read, but it has been given a schema to fill. Fail honestly instead of guessing.
+  if (isUrl && !pageText.trim()) {
+    const suffix = (robust && apifyReason) ? ` [${apifyReason}]` : "";
+    const msg = isSocial
+      ? SOCIAL_NO_CAPTION
+      : "Couldn't read anything from that page — paste the recipe text here instead.";
+    return Response.json({ ok:false, error: msg + suffix, apifyReason }, { status:422 });
+  }
+
   const schema = `{
   "title": "",
   "source": "",
@@ -250,7 +263,14 @@ export async function POST(req) {
 }`;
 
   const rules = `Rules:
-- nutrition: estimate per serving (all integers)
+- ACCURACY FIRST: use ONLY what the content actually states. Never invent, guess at or
+  reconstruct ingredients, steps, amounts or times that are not there. Returning fewer items —
+  or an empty ingredients/steps array — is CORRECT when the content doesn't list them. A short
+  accurate recipe is always better than a complete-looking invented one.
+- If the content does not actually contain a recipe (no ingredients AND no method), return
+  exactly {"error":"no_recipe"} and nothing else. Do not fabricate a recipe from a title,
+  a caption, a hashtag or a URL alone.
+- nutrition: estimate per serving from the listed ingredients (all integers)
 - servings: integer
 - prepTime/cookTime: "15 mins" style
 - ingredients: amount (number), unit (abbrev or null for countable), name MUST include descriptive prep words if available e.g. "finely chopped onion", "sliced chicken breast", "whole garlic cloves", "roughly torn basil leaves" — never just "onion" if the recipe says "finely chopped onion"
@@ -270,10 +290,10 @@ export async function POST(req) {
 - Ingredients: ${existing.ingredientCount || 0} items found (expected more)
 - Steps: ${existing.stepCount || 0} items found (expected more)
 
-Dig deeper into the content below. Infer and reconstruct ingredients and steps from any context clues — amounts mentioned, techniques described, visuals referenced. Be thorough and fill every field.\n\n` : "";
+Re-read the content below carefully and capture anything the first pass missed — ingredients or steps that were stated but not picked up. Only include what the content actually says; if it genuinely doesn't list more than was already found, return what IS there rather than filling the gaps with invented detail.\n\n` : "";
 
   const prompt = isDeep
-    ? `${deepPrefix}Extract a COMPLETE recipe from this content. Be exhaustive — infer missing details from context. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`
+    ? `${deepPrefix}Extract the recipe from this content as completely as the content allows. Read it thoroughly, but never add anything it doesn't state. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`
     : `Extract recipe details from this content. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`;
 
   const parts = imageBase64
@@ -304,20 +324,21 @@ Dig deeper into the content below. Infer and reconstruct ingredients and steps f
     console.error("Gemini returned no text. finishReason:", data.candidates?.[0]?.finishReason, "content:", JSON.stringify(data.candidates));
     const suffix = (robust && apifyReason) ? ` [${apifyReason}]` : "";
     const msg = isSocial
-      ? "Instagram/TikTok didn't share this post's caption. Open the post, copy its full caption text, and paste that here instead of the link." + suffix
+      ? SOCIAL_NO_CAPTION + suffix
       : `No recipe text returned (${data.stop_reason||"empty"})`;
     return Response.json({ ok:false, error: msg, apifyReason }, { status:422 });
   }
 
   try {
     const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
-    // Guard against a successful-but-empty result becoming a blank "Untitled" card
-    const hasContent = parsed && (parsed.title || (parsed.ingredients||[]).length || (parsed.steps||[]).length);
+    // The model reported there was no actual recipe in the content (rather than inventing one
+    // to fill the schema), or came back empty. Both mean: nothing real to save.
+    const hasContent = parsed && !parsed.error && (parsed.title || (parsed.ingredients||[]).length || (parsed.steps||[]).length);
     if(!hasContent){
       const suffix = (robust && apifyReason) ? ` [${apifyReason}]` : "";
       const msg = isSocial
-        ? "Instagram/TikTok didn't share this post's caption. Open the post, copy its full caption text, and paste that here instead of the link." + suffix
-        : "Couldn't extract a recipe from that — try a different link or manual entry.";
+        ? SOCIAL_NO_CAPTION + suffix
+        : "Couldn't find a recipe in that — try a different link or manual entry.";
       return Response.json({ ok:false, error: msg, apifyReason }, { status:422 });
     }
 

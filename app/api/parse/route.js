@@ -236,6 +236,10 @@ export async function POST(req) {
     }
   }
 
+  // Whatever the link DID give up (a title, a photo) even if the import goes on to fail. Sent
+  // back with the failure so the client can keep it when the user falls back to a screenshot.
+  const partial = isUrl ? { title: ogTitle || "", image: ogImage || "" } : null;
+
   // Nothing was actually retrieved from the link. Handing the model a bare URL and asking it to
   // "extract recipe details" is what makes it invent a plausible recipe out of thin air â€” it has
   // nothing to read, but it has been given a schema to fill. Fail honestly instead of guessing.
@@ -244,7 +248,7 @@ export async function POST(req) {
     const msg = isSocial
       ? SOCIAL_NO_CAPTION
       : "Couldn't read anything from that page â€” paste the recipe text here instead.";
-    return Response.json({ ok:false, error: msg + suffix, apifyReason }, { status:422 });
+    return Response.json({ ok:false, error: msg + suffix, apifyReason, partial }, { status:422 });
   }
 
   const schema = `{
@@ -318,7 +322,7 @@ Re-read the content below carefully and capture anything the first pass missed â
 
   if(!ok) {
     console.error("Gemini API error:", JSON.stringify(data));
-    return Response.json({ ok:false, error: data.error?.message || "API error" }, { status:500 });
+    return Response.json({ ok:false, error: data.error?.message || "API error", partial }, { status:500 });
   }
   // No text came back (e.g. only a non-text block, or hit max token limit before any output)
   if(!text.trim()){
@@ -327,7 +331,7 @@ Re-read the content below carefully and capture anything the first pass missed â
     const msg = isSocial
       ? SOCIAL_NO_CAPTION + suffix
       : `No recipe text returned (${data.stop_reason||"empty"})`;
-    return Response.json({ ok:false, error: msg, apifyReason }, { status:422 });
+    return Response.json({ ok:false, error: msg, apifyReason, partial }, { status:422 });
   }
 
   try {
@@ -340,7 +344,7 @@ Re-read the content below carefully and capture anything the first pass missed â
       const msg = isSocial
         ? SOCIAL_NO_CAPTION + suffix
         : "Couldn't find a recipe in that â€” try a different link or manual entry.";
-      return Response.json({ ok:false, error: msg, apifyReason }, { status:422 });
+      return Response.json({ ok:false, error: msg, apifyReason, partial }, { status:422 });
     }
 
     // Photo imports: where the real food photograph sits inside the uploaded image, so the
@@ -426,6 +430,6 @@ Re-read the content below carefully and capture anything the first pass missed â
     // A truncated response is the usual cause here â€” log the finish reason so a recurrence is
     // diagnosable from the Vercel logs without needing to reproduce it locally.
     console.error("Parse failed. finishReason:", data.candidates?.[0]?.finishReason, "usage:", JSON.stringify(data.usageMetadata));
-    return Response.json({ ok:false, error:"Parse failed" }, { status:422 });
+    return Response.json({ ok:false, error:"Parse failed", partial }, { status:422 });
   }
 }

@@ -5,10 +5,15 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.82";
+const APP_VERSION = "2.83";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.83", title:"A failed link is no longer a dead end", items:[
+    "When a link won't import, you can now add a screenshot of the post right there — the recipe is saved with the original link attached",
+    "Or tap 'Just save the link for now' to keep it as a manual entry and fill in the rest later",
+    "Anything the link did give up, like a title or photo, is carried over",
+  ]},
   { v:"2.82", title:"Import Instagram & TikTok posts from a screenshot", major:true, items:[
     "When a link won't import, screenshot the post with its caption showing and add it under 📷 Photo — the recipe is read straight from the screenshot",
     "The dish photo is picked out of the screenshot and used as the recipe's picture, without the caption text or app buttons around it",
@@ -1507,6 +1512,9 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
   const[imgPreview,setImgPreview]=useState(null);
   const[photoMode,setPhotoMode]=useState("recipe");
   const[nutritionResult,setNutritionResult]=useState(null);
+  // A link that just failed to import: {url, partial:{title,image}}. Kept so a follow-up
+  // screenshot (or a manual entry) is saved against that link instead of losing it.
+  const[failedLink,setFailedLink]=useState(null);
   useEffect(()=>{ if(prefill)parseAndSave({text:prefill}); },[]);
 
   function checkDuplicate(text){
@@ -1520,16 +1528,21 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       body:JSON.stringify({input:text,imageBase64,imageMediaType,robust})}).then(r=>r.json());
   }
 
-  async function parseAndSave({text="",imageBase64="",imageMediaType="image/jpeg",force=false}){
+  // sourceUrl/partial: set when this is a screenshot standing in for a link that failed to
+  // import — the saved recipe keeps that link, plus anything the link itself gave up.
+  async function parseAndSave({text="",imageBase64="",imageMediaType="image/jpeg",force=false,sourceUrl="",partial=null}){
     if(!force&&text.trim().startsWith("http")){
       const dup=checkDuplicate(text);
       if(dup){setDupWarning(dup);return;}
     }
     setDupWarning(null);
     setLoading(true);setError("");setLoadMsg("");
+    const isLink=text.trim().startsWith("http");
+    let linkPartial=null; // whatever the failed link returned, for the screenshot fallback
     try{
       // Phase 1 — quick methods (fast: oEmbed / page HTML / Microlink)
       let data=await callParse(text,imageBase64,imageMediaType,false);
+      linkPartial=data.partial||linkPartial;
       // Phase 2 — if a social link failed the quick way, escalate to the robust scraper.
       // It's slower (cold start), so warn the user why the wait is longer.
       const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(text);
@@ -1544,6 +1557,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
           for(let attempt=0; attempt<3 && !data.ok; attempt++){
             if(attempt>0){ setLoadMsg("Still fetching that post — almost there…"); await new Promise(r=>setTimeout(r,2500)); }
             data=await callParse(text,imageBase64,imageMediaType,true);
+            linkPartial=data.partial||linkPartial;
           }
         }
         finally{ clearTimeout(slowTimer); }
@@ -1557,18 +1571,35 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       // Photo import: if the AI located the actual food photograph inside the upload (e.g. a
       // screenshot of a post), crop to just that. Falls back to the whole upload if the crop
       // can't be made, and to the server's stock photo when the upload had no food photo at all.
-      let ogImage = data.ogImage || "";
+      let ogImage = data.ogImage || "", cropped = "";
       if(imageBase64 && data.photoBox){
-        const cropped = await cropToBox(`data:${imageMediaType};base64,${imageBase64}`, data.photoBox);
+        cropped = await cropToBox(`data:${imageMediaType};base64,${imageBase64}`, data.photoBox);
         if(cropped) ogImage = cropped;
       }
+      // Screenshot standing in for a failed link: carry over what the link itself gave up.
+      // Social links are excluded for title/photo — what they return anonymously is the
+      // login page's ("Instagram", a logo), not the post's.
+      const srcSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(sourceUrl);
+      if(!cropped && partial?.image && !srcSocial) ogImage = partial.image; // a real photo of it beats a stock one
       if(!ogImage && imageBase64) ogImage = `data:${imageMediaType};base64,${imageBase64}`;
-      onAdd({id:Date.now().toString(),...r,ogImage,url:text.startsWith("http")?text:"",savedAt:Date.now()});
+      let srcName="";
+      if(sourceUrl){
+        srcName=/instagram\.com/i.test(sourceUrl)?"Instagram":/tiktok\.com/i.test(sourceUrl)?"TikTok":/facebook\.com|fb\.watch/i.test(sourceUrl)?"Facebook":"";
+        if(!srcName){try{srcName=new URL(sourceUrl).hostname.replace(/^www\./,"");}catch{}}
+      }
+      onAdd({id:Date.now().toString(),...r,
+        title:r.title||(!srcSocial&&partial?.title)||"",
+        source:r.source||srcName,
+        ogImage,url:isLink?text.trim():sourceUrl,savedAt:Date.now()});
       onClose();
     }catch(e){
       const m=e.message||"Couldn't parse — try manual entry.";
       setError(m);
-      if(text.trim().startsWith("http"))logImportIssue(text.trim(),m);
+      if(isLink){
+        logImportIssue(text.trim(),m);
+        // Remember the link so the screenshot / manual fallback is saved against it
+        setFailedLink({url:text.trim(),partial:linkPartial});
+      }
       if(onFail)onFail();
     }
     finally{setLoading(false);setLoadMsg("");}
@@ -1594,9 +1625,26 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       const base64=dataUrl.split(",")[1];
       setImgPreview(dataUrl);
       if(photoMode==="nutrition"){scanIngredients(base64,file.type||"image/jpeg");}
-      else{parseAndSave({imageBase64:base64,imageMediaType:file.type||"image/jpeg"});}
+      else{parseAndSave({imageBase64:base64,imageMediaType:file.type||"image/jpeg",sourceUrl:failedLink?.url||"",partial:failedLink?.partial||null});}
     };
     reader.readAsDataURL(file);
+    e.target.value=""; // let the same file be picked again after a failed attempt
+  }
+  // Open the photo library for a screenshot (not the camera)
+  function pickScreenshot(){
+    if(!fileRef.current)return;
+    setPhotoMode("recipe");
+    fileRef.current.removeAttribute("capture");
+    fileRef.current.click();
+  }
+  // Fallback of last resort: keep the link as a manual entry so it isn't lost
+  function saveLinkManually(){
+    if(!failedLink)return;
+    const u=failedLink.url, social=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(u);
+    let src=/instagram\.com/i.test(u)?"Instagram":/tiktok\.com/i.test(u)?"TikTok":/facebook\.com|fb\.watch/i.test(u)?"Facebook":"";
+    if(!src){try{src=new URL(u).hostname.replace(/^www\./,"");}catch{}}
+    setForm(f=>({...f,url:u,source:f.source||src,title:f.title||(!social&&failedLink.partial?.title)||""}));
+    setError("");setTab("manual");
   }
 
   function startVoice(){
@@ -1635,8 +1683,11 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
           ))}
         </div>
 
+        {/* One picker for the whole sheet — the Photo tab and the failed-link fallback both use it */}
+        <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} style={{display:"none"}}/>
+
         {tab==="paste"&&<>
-          <textarea value={input} onChange={e=>{setInput(e.target.value);setDupWarning(null);}} placeholder={"Paste a recipe URL or text…\n\nTip: for Instagram or TikTok, a screenshot under Photo works best"} style={{...inp,minHeight:110,resize:"none"}}/>
+          <textarea value={input} onChange={e=>{setInput(e.target.value);setDupWarning(null);setFailedLink(null);}} placeholder={"Paste a recipe URL or text…\n\nTip: for Instagram or TikTok, a screenshot under Photo works best"} style={{...inp,minHeight:110,resize:"none"}}/>
           {dupWarning&&(
             <div style={{background:"#FEF3C7",border:"1px solid #FCD34D",borderRadius:12,padding:"10px 13px",fontSize:13,color:"#92400E",marginTop:8}}>
               ⚠️ <strong>"{dupWarning.title}"</strong> is already in your pantry.
@@ -1647,14 +1698,28 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
             </div>
           )}
           {error&&<div style={{color:"#B91C1C",fontSize:13,marginTop:6,marginBottom:2}}>{error}</div>}
-          {!dupWarning&&<button onClick={()=>parseAndSave({text:input})} disabled={!input.trim()} className="btn-primary" style={{width:"100%",padding:"14px 0",marginTop:10,borderRadius:"var(--r-md)",opacity:input.trim()?1:.6}}>Save with AI ✦</button>}
+          {/* The link couldn't be read — offer ways to save it anyway, keeping the link attached */}
+          {failedLink&&!dupWarning&&(
+            <div style={{background:"var(--cream)",border:"1px solid var(--sage-lt)",borderRadius:12,padding:"12px 13px",marginTop:8}}>
+              <div style={{fontSize:13,fontWeight:700,color:"var(--forest)",marginBottom:3}}>Save it another way</div>
+              <div style={{fontSize:12,color:"var(--mist)",lineHeight:1.5,marginBottom:10}}>The link stays attached to the recipe either way.</div>
+              <button onClick={pickScreenshot} className="btn-primary" style={{width:"100%",padding:"12px 0",borderRadius:"var(--r-md)"}}>📷 Add a screenshot of the post</button>
+              <button onClick={saveLinkManually} style={{width:"100%",padding:"10px 0",marginTop:8,borderRadius:"var(--r-md)",border:"1px solid var(--sage-lt)",background:"transparent",color:"var(--moss)",fontSize:13,fontWeight:700,cursor:"pointer"}}>✏️ Just save the link for now</button>
+            </div>
+          )}
+          {!dupWarning&&<button onClick={()=>parseAndSave({text:input})} disabled={!input.trim()} className="btn-primary" style={{width:"100%",padding:"14px 0",marginTop:10,borderRadius:"var(--r-md)",opacity:input.trim()?1:.6,...(failedLink?{background:"transparent",color:"var(--moss)",border:"1px solid var(--sage-lt)",boxShadow:"none"}:{})}}>{failedLink?"Try the link again":"Save with AI ✦"}</button>}
           <div style={{marginTop:10,padding:"10px 13px",background:"var(--sage-pale)",borderRadius:12,fontSize:12,color:"var(--forest)",lineHeight:1.65,border:"1px solid var(--sage-lt)"}}>
             💡 <strong>Recipe sites:</strong> paste the URL directly.<br/><strong>Instagram / TikTok:</strong> try the link — if it won't import, screenshot the post with its caption showing and add it under <strong>📷 Photo</strong>. The dish photo is kept too.
           </div>
         </>}
 
         {tab==="photo"&&<>
-          <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} style={{display:"none"}}/>
+          {failedLink&&photoMode==="recipe"&&(
+            <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:12,padding:"8px 12px",marginBottom:12,fontSize:12,color:"var(--forest)"}}>
+              <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>🔗 Will be saved with <strong>{failedLink.url.replace(/^https?:\/\/(www\.)?/,"")}</strong></span>
+              <button onClick={()=>setFailedLink(null)} title="Don't attach this link" style={{background:"none",border:"none",color:"var(--mist)",fontSize:16,cursor:"pointer",lineHeight:1,flexShrink:0}}>×</button>
+            </div>
+          )}
           {/* Mode toggle */}
           <div style={{display:"flex",gap:4,marginBottom:14,background:"rgba(255,255,255,.5)",borderRadius:12,padding:3,border:"1px solid var(--parchment)"}}>
             {[{id:"recipe",label:"📸 Recipe photo"},{id:"nutrition",label:"🥦 Scan ingredients"}].map(m=>(

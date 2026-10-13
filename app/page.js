@@ -5,10 +5,15 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.81";
+const APP_VERSION = "2.82";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.82", title:"Import Instagram & TikTok posts from a screenshot", major:true, items:[
+    "When a link won't import, screenshot the post with its caption showing and add it under 📷 Photo — the recipe is read straight from the screenshot",
+    "The dish photo is picked out of the screenshot and used as the recipe's picture, without the caption text or app buttons around it",
+    "Photos you add yourself are now stored permanently like every other recipe photo",
+  ]},
   { v:"2.81", title:"No more invented ingredients and steps", major:true, items:[
     "When a link couldn't be read, the AI was still asked to produce a full recipe — so it filled in the blanks with plausible-sounding ingredients and method steps that were never in the post",
     "It's now told to use only what the content actually says, and to say so when there's no real recipe there, rather than inventing one",
@@ -383,6 +388,30 @@ function imageLoads(url,timeout=10000){
     im.onload=()=>done(im.naturalWidth>0);
     im.onerror=()=>done(false);
     im.src=url;
+  });
+}
+
+// Crop an uploaded image to the region the AI identified as the actual food photograph
+// ([ymin,xmin,ymax,xmax], each 0-1000), so a screenshot of a social post becomes just the dish
+// rather than a card full of caption text and buttons. Re-encoded small enough to store.
+// Resolves "" if the crop can't be made, so callers can fall back to the whole image.
+function cropToBox(dataUrl,box,maxSide=1000){
+  return new Promise(resolve=>{
+    const im=new Image();
+    im.onload=()=>{
+      try{
+        const[y0,x0,y1,x1]=box.map(v=>Math.max(0,Math.min(1000,v))/1000);
+        const sx=x0*im.naturalWidth,sy=y0*im.naturalHeight,sw=(x1-x0)*im.naturalWidth,sh=(y1-y0)*im.naturalHeight;
+        if(sw<50||sh<50){resolve("");return;}
+        const k=Math.min(1,maxSide/Math.max(sw,sh));
+        const c=document.createElement("canvas");
+        c.width=Math.round(sw*k);c.height=Math.round(sh*k);
+        c.getContext("2d").drawImage(im,sx,sy,sw,sh,0,0,c.width,c.height);
+        resolve(c.toDataURL("image/jpeg",.85));
+      }catch{resolve("");}
+    };
+    im.onerror=()=>resolve("");
+    im.src=dataUrl;
   });
 }
 
@@ -1525,8 +1554,15 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       if(!r.title&&!(r.ingredients||[]).length&&!(r.steps||[]).length){
         throw new Error("Couldn't extract a recipe — try a different link or manual entry.");
       }
-      // If image was uploaded, use it as the recipe image
-      const ogImage = data.ogImage || (imageBase64 ? `data:${imageMediaType};base64,${imageBase64}` : "");
+      // Photo import: if the AI located the actual food photograph inside the upload (e.g. a
+      // screenshot of a post), crop to just that. Falls back to the whole upload if the crop
+      // can't be made, and to the server's stock photo when the upload had no food photo at all.
+      let ogImage = data.ogImage || "";
+      if(imageBase64 && data.photoBox){
+        const cropped = await cropToBox(`data:${imageMediaType};base64,${imageBase64}`, data.photoBox);
+        if(cropped) ogImage = cropped;
+      }
+      if(!ogImage && imageBase64) ogImage = `data:${imageMediaType};base64,${imageBase64}`;
       onAdd({id:Date.now().toString(),...r,ogImage,url:text.startsWith("http")?text:"",savedAt:Date.now()});
       onClose();
     }catch(e){
@@ -1600,7 +1636,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
         </div>
 
         {tab==="paste"&&<>
-          <textarea value={input} onChange={e=>{setInput(e.target.value);setDupWarning(null);}} placeholder={"Paste a recipe URL or text…\n\nTip: copy a caption from Instagram or TikTok"} style={{...inp,minHeight:110,resize:"none"}}/>
+          <textarea value={input} onChange={e=>{setInput(e.target.value);setDupWarning(null);}} placeholder={"Paste a recipe URL or text…\n\nTip: for Instagram or TikTok, a screenshot under Photo works best"} style={{...inp,minHeight:110,resize:"none"}}/>
           {dupWarning&&(
             <div style={{background:"#FEF3C7",border:"1px solid #FCD34D",borderRadius:12,padding:"10px 13px",fontSize:13,color:"#92400E",marginTop:8}}>
               ⚠️ <strong>"{dupWarning.title}"</strong> is already in your pantry.
@@ -1613,7 +1649,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
           {error&&<div style={{color:"#B91C1C",fontSize:13,marginTop:6,marginBottom:2}}>{error}</div>}
           {!dupWarning&&<button onClick={()=>parseAndSave({text:input})} disabled={!input.trim()} className="btn-primary" style={{width:"100%",padding:"14px 0",marginTop:10,borderRadius:"var(--r-md)",opacity:input.trim()?1:.6}}>Save with AI ✦</button>}
           <div style={{marginTop:10,padding:"10px 13px",background:"var(--sage-pale)",borderRadius:12,fontSize:12,color:"var(--forest)",lineHeight:1.65,border:"1px solid var(--sage-lt)"}}>
-            💡 <strong>Recipe sites:</strong> paste the URL directly.<br/><strong>Instagram / TikTok:</strong> copy the post caption and paste here.
+            💡 <strong>Recipe sites:</strong> paste the URL directly.<br/><strong>Instagram / TikTok:</strong> try the link — if it won't import, screenshot the post with its caption showing and add it under <strong>📷 Photo</strong>. The dish photo is kept too.
           </div>
         </>}
 
@@ -1657,7 +1693,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
               style={{...inp,border:"2px dashed var(--sage-lt)",borderRadius:"var(--r-lg)",padding:"22px 20px",textAlign:"center",cursor:"pointer",background:"var(--cream)",color:"var(--moss)"}}>
               <div style={{fontSize:32,marginBottom:6}}>🖼️</div>
               <div style={{fontWeight:700,fontSize:14}}>Choose from library</div>
-              <div style={{fontSize:12,color:"var(--mist)",marginTop:3}}>{photoMode==="nutrition"?"Point camera at your food or ingredients":"Point camera at a recipe or cookbook page"}</div>
+              <div style={{fontSize:12,color:"var(--mist)",marginTop:3}}>{photoMode==="nutrition"?"A photo of your food or ingredients":"A recipe photo, or a screenshot of an Instagram / TikTok post with its caption"}</div>
             </button>
           </div>
           )}
@@ -3457,10 +3493,14 @@ async function cloudUploadAll(recipes,userId){
 }
 async function storeImagePermanently(url,recipeId,userId,onErr){
   // Upload to Supabase Storage so Instagram/TikTok CDN expiry never breaks the image
-  if(!url||url.startsWith("data:")||url.includes("supabase.co"))return url;
+  if(!url||url.includes("supabase.co"))return url;
+  // A data: URL already IS the image (photo imports, "Change photo") — read it directly and
+  // upload it like any other, instead of leaving it embedded in the recipe where it bloats
+  // local storage and every cloud sync. Anything else is fetched through the proxy.
+  const inline=url.startsWith("data:");
   try{
     const sb=getSupabase();if(!sb){onErr&&onErr("not signed in");return url;}
-    const res=await fetch(`/api/img?url=${encodeURIComponent(url)}`);
+    const res=await fetch(inline?url:`/api/img?url=${encodeURIComponent(url)}`);
     if(!res.ok||!res.headers.get("content-type")?.startsWith("image/")){onErr&&onErr("image source dead");return url;}
     const blob=await res.blob();
     const ext=blob.type.includes("png")?"png":blob.type.includes("webp")?"webp":"jpg";
@@ -3468,7 +3508,9 @@ async function storeImagePermanently(url,recipeId,userId,onErr){
     const{error}=await sb.storage.from("recipe-images").upload(path,blob,{contentType:blob.type,upsert:true});
     if(error){onErr&&onErr("storage: "+(error.message||"upload failed"));return url;}
     const{data:{publicUrl}}=sb.storage.from("recipe-images").getPublicUrl(path);
-    return publicUrl;
+    // A user-supplied photo can replace an earlier one at this same path — cache-bust so the
+    // old picture isn't what keeps showing.
+    return inline?`${publicUrl}?v=${Date.now()}`:publicUrl;
   }catch(e){onErr&&onErr(e.message||"unknown error");return url;}
 }
 

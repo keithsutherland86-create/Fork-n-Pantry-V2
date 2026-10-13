@@ -4,7 +4,7 @@ import { fetchViaApify } from "../../../lib/social";
 // killed mid-request on the escalated social import.
 export const maxDuration = 60;
 
-const SOCIAL_NO_CAPTION = "Instagram/TikTok didn't share this post's caption. Open the post, copy its full caption text, and paste that here instead of the link.";
+const SOCIAL_NO_CAPTION = "Instagram/TikTok didn't share this post's caption. Screenshot the post with its caption showing and add it under Photo — or copy the caption text and paste it here instead of the link.";
 
 // Pull og:image, og:title and a clean recipe text summary (from JSON-LD if present) out of a page's HTML
 function extractFromHtml(html, fallbackTitle = "") {
@@ -299,7 +299,8 @@ Re-read the content below carefully and capture anything the first pass missed �
   const parts = imageBase64
     ? [
         { inline_data:{ mime_type:imageMediaType, data:imageBase64 } },
-        { text:`Extract recipe details from this image. Return ONLY raw JSON, no markdown:\n\n${schema}\n\n${rules}` }
+        { text:`Extract recipe details from this image. Return ONLY raw JSON, no markdown:\n\n${schema}\n\n${rules}
+- photoBox: also add a "photoBox" field. If the image includes an actual photograph of the food (it may be a screenshot of a social post, where the photo sits among captions and app buttons), give that photograph's bounding box as [ymin, xmin, ymax, xmax], each 0-1000 relative to the whole image, tight around the photograph and excluding any caption text, profile pictures, buttons or other interface. If there is no usable food photograph (e.g. the image is only text), use "photoBox": null.` }
       ]
     : [{ text:prompt }];
 
@@ -342,9 +343,20 @@ Re-read the content below carefully and capture anything the first pass missed �
       return Response.json({ ok:false, error: msg, apifyReason }, { status:422 });
     }
 
+    // Photo imports: where the real food photograph sits inside the uploaded image, so the
+    // client can crop a screenshot down to just the dish. Sanity-check it — a box that's
+    // malformed or tiny (a profile picture, an icon) is worse than no box at all.
+    const pb = parsed.photoBox;
+    delete parsed.photoBox; // layout hint for this upload only — not part of the saved recipe
+    const photoBox = imageBase64 && Array.isArray(pb) && pb.length === 4 && pb.every(n => Number.isFinite(n) && n >= 0 && n <= 1000)
+      && pb[2] - pb[0] >= 150 && pb[3] - pb[1] >= 150 ? pb : null;
+
     let finalImage = ogImage;
 
-    if (!finalImage && parsed.imageSearch) {
+    // Skip the stock-photo lookup when the upload itself contains the dish — the user's own
+    // photo beats a generic one. (Previously the stock fallback always won, so an uploaded
+    // photo was never actually used.)
+    if (!finalImage && !photoBox && parsed.imageSearch) {
       // ── Option A: Unsplash API (50 req/hr free — add UNSPLASH_ACCESS_KEY in Vercel env vars) ──
       if (process.env.UNSPLASH_ACCESS_KEY) {
         try {
@@ -407,12 +419,9 @@ Re-read the content below carefully and capture anything the first pass missed �
       }
     }
 
-    // If image was uploaded, use it as the recipe image
-    if (imageBase64 && !finalImage) {
-      finalImage = `data:${imageMediaType};base64,${imageBase64}`;
-    }
-
-    return Response.json({ ok:true, recipe:parsed, ogImage:finalImage });
+    // With a photoBox, ogImage is left empty on purpose: the client already holds the upload
+    // and crops it locally, rather than us echoing megabytes of base64 back down the wire.
+    return Response.json({ ok:true, recipe:parsed, ogImage:finalImage, photoBox });
   } catch {
     // A truncated response is the usual cause here — log the finish reason so a recurrence is
     // diagnosable from the Vercel logs without needing to reproduce it locally.

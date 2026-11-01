@@ -4,7 +4,7 @@ import { fetchViaApify } from "../../../lib/social";
 // killed mid-request on the escalated social import.
 export const maxDuration = 60;
 
-const SOCIAL_NO_CAPTION = "Instagram/TikTok didn't share this post's caption. Screenshot the post with its caption showing and add it under Photo — or copy the caption text and paste it here instead of the link.";
+const SOCIAL_NO_CAPTION = "Instagram/TikTok didn't share this post's caption. Add it under Photo instead — a screenshot of the caption, plus a screen recording if the method is only in the video.";
 
 // Pull og:image, og:title and a clean recipe text summary (from JSON-LD if present) out of a page's HTML
 function extractFromHtml(html, fallbackTitle = "") {
@@ -105,6 +105,34 @@ async function callGemini(model, parts, maxTokens, thinkingBudget = 512) {
   return { ok: res.ok && !data.error, quotaExceeded: data.error?.status === "RESOURCE_EXHAUSTED", data, text };
 }
 
+// A video uploaded to Gemini's file store is PROCESSING for a few seconds before it can be used.
+async function waitForVideo(name, timeoutMs = 40000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    try {
+      const f = await (await fetch(`https://generativelanguage.googleapis.com/v1beta/${name}`, {
+        headers: { "x-goog-api-key": process.env.GEMINI_API_KEY },
+      })).json();
+      if (f.state === "ACTIVE") return true;
+      if (f.state === "FAILED" || f.error) return false;
+    } catch {}
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  return false;
+}
+
+// Best-effort removal once read. Google expires uploads after 48h anyway, but there's no reason
+// to keep someone's video around that long.
+async function deleteVideo(name) {
+  try {
+    await fetch(`https://generativelanguage.googleapis.com/v1beta/${name}`, {
+      method: "DELETE",
+      headers: { "x-goog-api-key": process.env.GEMINI_API_KEY },
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {}
+}
+
 async function fetchHtml(url, timeout = 7000) {
   const agents = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1",
@@ -123,6 +151,18 @@ async function fetchHtml(url, timeout = 7000) {
 export async function POST(req) {
   const body = await req.json();
   const { input = "", imageBase64 = "", imageMediaType = "image/jpeg", mode = "", existing = null, robust = false } = body;
+  // Media imports: up to a few screenshots, and/or one video already uploaded to Gemini's file
+  // store by the browser (see /api/video-session). `imageBase64` is the older single-image form.
+  const images = [
+    ...(imageBase64 && mode !== "nutrition" ? [{ data: imageBase64, mimeType: imageMediaType }] : []),
+    ...(Array.isArray(body.images) ? body.images : []),
+  ].filter(i => i && typeof i.data === "string" && /^image\//.test(i.mimeType || "")).slice(0, 4);
+  // Only accept a file reference that is genuinely one of Gemini's (it gets interpolated into
+  // an API path below).
+  const video = body.video && /^files\/[a-z0-9-]+$/.test(body.video.name || "")
+    && String(body.video.uri || "").startsWith("https://generativelanguage.googleapis.com/")
+    && /^video\//.test(body.video.mimeType || "") ? body.video : null;
+  const hasMedia = images.length > 0 || !!video;
   const isDeep = mode === "deep";
 
   // ── Nutrition scan mode ───────────────────────────────────────────────────────
@@ -260,6 +300,7 @@ export async function POST(req) {
   "cookTime": "",
   "ingredients": [{ "amount": 2, "unit": "cup", "name": "plain flour" }],
   "steps": [],
+  "notes": "",
   "tags": [],
   "emoji": "",
   "imageSearch": "",
@@ -274,6 +315,7 @@ export async function POST(req) {
 - If the content does not actually contain a recipe (no ingredients AND no method), return
   exactly {"error":"no_recipe"} and nothing else. Do not fabricate a recipe from a title,
   a caption, a hashtag or a URL alone.
+- notes: storage, freezing, reheating, make-ahead or serving tips the content gives (e.g. "To freeze: …"), kept close to how they're written. These are NOT cooking steps — don't put them in "steps". Empty string if there are none.
 - nutrition: estimate per serving from the listed ingredients (all integers)
 - servings: integer
 - prepTime/cookTime: "15 mins" style
@@ -283,7 +325,7 @@ export async function POST(req) {
 - source: site/platform name
 - imageSearch: 2-3 English words describing the dish for a food photo search e.g. "spaghetti carbonara pasta", "chocolate lava cake", "green thai curry"`;
 
-  const context = imageBase64
+  const context = hasMedia
     ? null
     : isUrl && pageText
       ? `URL: ${input}${ogTitle?`\nTitle: ${ogTitle}`:""}\n\nPage content:\n${pageText}`
@@ -300,18 +342,33 @@ Re-read the content below carefully and capture anything the first pass missed �
     ? `${deepPrefix}Extract the recipe from this content as completely as the content allows. Read it thoroughly, but never add anything it doesn't state. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`
     : `Extract recipe details from this content. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`;
 
-  const parts = imageBase64
+  // Media imports. A video is the only place many reels keep the method — spoken, or shown as
+  // on-screen text — while the ingredients often live only in the caption. So read them together.
+  const mediaIntro = video
+    ? `Extract the recipe from this cooking video${images.length ? ", together with the screenshot(s) after it (usually the post's caption)" : ""}. Watch AND listen: the method is often only spoken or shown as on-screen text, while the ingredients may only be in the caption. Combine all of it — but include only what is actually said, shown or written.`
+    : `Extract recipe details from ${images.length > 1 ? "these images — they are parts of the same post, so read them together" : "this image"}.`;
+  const photoRule = video
+    ? `- photo: add a "photo" field for the recipe picture: {"source":"video","seconds":<the moment with the clearest view of the finished dish>,"box":[ymin,xmin,ymax,xmax]}, box each 0-1000 relative to the video frame, tight around the food and excluding any app interface, captions or text overlays. Use "photo": null if no moment shows the food clearly.`
+    : `- photo: if an image includes an actual photograph of the food (it may be a screenshot of a social post, where the photo sits among captions and app buttons), add {"source":"image","index":<0-based image number>,"box":[ymin,xmin,ymax,xmax]}, each 0-1000 relative to that image, tight around the photograph and excluding caption text, profile pictures, buttons and other interface. If there is no usable food photograph (e.g. the image is only text), use "photo": null.`;
+
+  const parts = hasMedia
     ? [
-        { inline_data:{ mime_type:imageMediaType, data:imageBase64 } },
-        { text:`Extract recipe details from this image. Return ONLY raw JSON, no markdown:\n\n${schema}\n\n${rules}
-- photoBox: also add a "photoBox" field. If the image includes an actual photograph of the food (it may be a screenshot of a social post, where the photo sits among captions and app buttons), give that photograph's bounding box as [ymin, xmin, ymax, xmax], each 0-1000 relative to the whole image, tight around the photograph and excluding any caption text, profile pictures, buttons or other interface. If there is no usable food photograph (e.g. the image is only text), use "photoBox": null.` }
+        ...(video ? [{ file_data:{ mime_type:video.mimeType, file_uri:video.uri } }] : []),
+        ...images.map(i => ({ inline_data:{ mime_type:i.mimeType, data:i.data } })),
+        { text:`${mediaIntro} Return ONLY raw JSON, no markdown:\n\n${schema}\n\n${rules}\n${photoRule}` },
       ]
     : [{ text:prompt }];
+
+  // An uploaded video must finish processing on Google's side before it can be read.
+  if (video && !(await waitForVideo(video.name))) {
+    await deleteVideo(video.name);
+    return Response.json({ ok:false, error:"Couldn't process that video — try recording it again" }, { status:422 });
+  }
 
   let { ok, data, text, quotaExceeded } = await callGemini(
     isDeep ? "gemini-pro-latest" : "gemini-flash-latest",
     parts,
-    isDeep ? 12000 : 6000,
+    isDeep ? 12000 : video ? 8000 : 6000,
     isDeep ? 2048 : 1024
   );
   // The pro model requires a billed account (0 free-tier quota) — fall back to flash rather
@@ -319,6 +376,8 @@ Re-read the content below carefully and capture anything the first pass missed �
   if (!ok && isDeep && quotaExceeded) {
     ({ ok, data, text } = await callGemini("gemini-flash-latest", parts, 6000, 1024));
   }
+  // The video has been read — don't leave a copy of it in Google's file store.
+  if (video) await deleteVideo(video.name);
 
   if(!ok) {
     console.error("Gemini API error:", JSON.stringify(data));
@@ -347,20 +406,27 @@ Re-read the content below carefully and capture anything the first pass missed �
       return Response.json({ ok:false, error: msg, apifyReason, partial }, { status:422 });
     }
 
-    // Photo imports: where the real food photograph sits inside the uploaded image, so the
-    // client can crop a screenshot down to just the dish. Sanity-check it — a box that's
-    // malformed or tiny (a profile picture, an icon) is worse than no box at all.
-    const pb = parsed.photoBox;
-    delete parsed.photoBox; // layout hint for this upload only — not part of the saved recipe
-    const photoBox = imageBase64 && Array.isArray(pb) && pb.length === 4 && pb.every(n => Number.isFinite(n) && n >= 0 && n <= 1000)
-      && pb[2] - pb[0] >= 150 && pb[3] - pb[1] >= 150 ? pb : null;
+    // Media imports: where the dish is in what was uploaded — a moment in the video, or a region
+    // of a screenshot — so the client can cut out just the food for the recipe picture. Sanity-
+    // check it: a malformed or tiny box (a profile picture, an icon) is worse than none.
+    const p = parsed.photo;
+    delete parsed.photo;     // layout hints for this upload only — not part of the saved recipe
+    delete parsed.photoBox;
+    const validBox = b => Array.isArray(b) && b.length === 4 && b.every(n => Number.isFinite(n) && n >= 0 && n <= 1000)
+      && b[2] - b[0] >= 150 && b[3] - b[1] >= 150;
+    let photo = null;
+    if (p && video && p.source === "video" && Number.isFinite(p.seconds) && p.seconds >= 0) {
+      photo = { source:"video", seconds:p.seconds, box: validBox(p.box) ? p.box : null };
+    } else if (p && images.length && p.source === "image" && validBox(p.box)) {
+      photo = { source:"image", index: Number.isInteger(p.index) && p.index >= 0 && p.index < images.length ? p.index : 0, box:p.box };
+    }
 
     let finalImage = ogImage;
 
     // Skip the stock-photo lookup when the upload itself contains the dish — the user's own
     // photo beats a generic one. (Previously the stock fallback always won, so an uploaded
     // photo was never actually used.)
-    if (!finalImage && !photoBox && parsed.imageSearch) {
+    if (!finalImage && !photo && parsed.imageSearch) {
       // ── Option A: Unsplash API (50 req/hr free — add UNSPLASH_ACCESS_KEY in Vercel env vars) ──
       if (process.env.UNSPLASH_ACCESS_KEY) {
         try {
@@ -379,20 +445,21 @@ Re-read the content below carefully and capture anything the first pass missed �
         const foodPhotos = {
           pasta:       "https://images.unsplash.com/photo-1621996346565-e3dbc646d9a9?w=600&q=80",
           spaghetti:   "https://images.unsplash.com/photo-1621996346565-e3dbc646d9a9?w=600&q=80",
-          chicken:     "https://images.unsplash.com/photo-1598103442097-8b74394b95c7?w=600&q=80",
+          // (The chicken, shrimp/prawn and chocolate photos started 404ing upstream. Removed, or
+          //  pointed at a working photo of the closest category, so they never show as broken.)
           beef:        "https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=600&q=80",
           steak:       "https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=600&q=80",
           fish:        "https://images.unsplash.com/photo-1559847844-5315695dadae?w=600&q=80",
           salmon:      "https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=600&q=80",
           seafood:     "https://images.unsplash.com/photo-1559847844-5315695dadae?w=600&q=80",
-          shrimp:      "https://images.unsplash.com/photo-1565680018093-ebb6b9ab5460?w=600&q=80",
-          prawn:       "https://images.unsplash.com/photo-1565680018093-ebb6b9ab5460?w=600&q=80",
+          shrimp:      "https://images.unsplash.com/photo-1559847844-5315695dadae?w=600&q=80",
+          prawn:       "https://images.unsplash.com/photo-1559847844-5315695dadae?w=600&q=80",
           salad:       "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=600&q=80",
           soup:        "https://images.unsplash.com/photo-1547592166-23ac45744acd?w=600&q=80",
           stew:        "https://images.unsplash.com/photo-1547592166-23ac45744acd?w=600&q=80",
           dessert:     "https://images.unsplash.com/photo-1563729784474-d77dbb933a9e?w=600&q=80",
           cake:        "https://images.unsplash.com/photo-1563729784474-d77dbb933a9e?w=600&q=80",
-          chocolate:   "https://images.unsplash.com/photo-1606312619070-d48b2c0a3b3a?w=600&q=80",
+          chocolate:   "https://images.unsplash.com/photo-1563729784474-d77dbb933a9e?w=600&q=80",
           cookie:      "https://images.unsplash.com/photo-1499636136210-6f4ee915583e?w=600&q=80",
           breakfast:   "https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?w=600&q=80",
           pancake:     "https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?w=600&q=80",
@@ -423,9 +490,11 @@ Re-read the content below carefully and capture anything the first pass missed �
       }
     }
 
-    // With a photoBox, ogImage is left empty on purpose: the client already holds the upload
-    // and crops it locally, rather than us echoing megabytes of base64 back down the wire.
-    return Response.json({ ok:true, recipe:parsed, ogImage:finalImage, photoBox });
+    // With a photo hint, ogImage is left empty on purpose: the client already holds the upload
+    // and cuts the picture out locally, rather than us echoing megabytes back down the wire.
+    // (photoBox is the older single-screenshot form, kept for a client still on the old code.)
+    const photoBox = photo?.source === "image" && photo.index === 0 ? photo.box : null;
+    return Response.json({ ok:true, recipe:parsed, ogImage:finalImage, photo, photoBox });
   } catch {
     // A truncated response is the usual cause here — log the finish reason so a recurrence is
     // diagnosable from the Vercel logs without needing to reproduce it locally.

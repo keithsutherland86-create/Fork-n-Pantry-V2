@@ -5,10 +5,18 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.83";
+const APP_VERSION = "2.84";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.84", title:"Import recipes from the video itself", major:true, items:[
+    "Screen-record a reel and add it under 📷 Photo — the AI watches and listens, so steps that are only spoken or shown on screen are captured",
+    "Pick the recording and a screenshot of the caption together, and it combines both: ingredients from the caption, method from the video",
+    "Fix a recipe that came in wrong: open it, tap Edit, then 📷 Replace from screenshot / video. Your notes, cookbooks and cook history are kept",
+    "Freezing, reheating and storage tips from a post now go into the recipe's Notes",
+    "The recipe photo is taken from the video at the moment the finished dish is clearest",
+    "Fixed recipes showing an emoji instead of a picture when their stock photo (chicken, prawn or chocolate) had been deleted",
+  ]},
   { v:"2.83", title:"A failed link is no longer a dead end", items:[
     "When a link won't import, you can now add a screenshot of the post right there — the recipe is saved with the original link attached",
     "Or tap 'Just save the link for now' to keep it as a manual entry and fill in the rest later",
@@ -235,7 +243,7 @@ const CHANGELOG = [
 const LATEST_NOTABLE = (CHANGELOG.find(c=>c.major)||CHANGELOG[0]).v;
 // [PRO] Features showcased in What's New — flagged for a future Pro tier
 const PRO_FEATURES = [
-  { icon:"🔍", name:"AI Refresh", desc:"Recipe imported with missing steps or ingredients? Tap AI Refresh in the editor and it digs deeper into the source — re-reading the page and video for everything the quick import missed, then fills the gaps automatically." },
+  { icon:"🔍", name:"AI Refresh", desc:"Recipe imported with missing steps or ingredients? Tap AI Refresh in the editor and it re-reads the original page for anything the quick import missed. If the recipe came in wrong, or the method is only in the video, use Replace from screenshot / video instead." },
   { icon:"🌐", name:"Shared Cookbooks", desc:"Invite family or friends to a cookbook and build it together. Everyone's additions sync live, you can see who's joined, and recipes flow both ways — perfect for planning meals as a household." },
   { icon:"✓", name:"Cook History & Rating", desc:"Tap 'Made it ★' after cooking to log it and give a star rating. See when you last cooked a recipe, your average rating, and sort your whole collection by what you love most." },
   { icon:"🏠", name:"Pantry Tracker", desc:"Mark the ingredients you always have at home. The grocery list automatically hides pantry staples so your shopping list only shows what you actually need to buy." },
@@ -376,9 +384,21 @@ function Logo({size=34}){
 }
 
 // ─── Image proxy helper ───────────────────────────────────────────────────────
+// Stock fallback photos that have since been deleted upstream (they 404), mapped to working ones.
+// Recipes saved with them showed an emoji; swapping on display fixes those without touching data.
+const DEAD_STOCK={
+  "photo-1598103442097-8b74394b95c7":"photo-1504674900247-0877df9cc836", // chicken → generic dish
+  "photo-1565680018093-ebb6b9ab5460":"photo-1559847844-5315695dadae",    // shrimp/prawn → seafood
+  "photo-1606312619070-d48b2c0a3b3a":"photo-1563729784474-d77dbb933a9e", // chocolate → cake
+};
+function liveStock(url){
+  if(!url||!url.includes("images.unsplash.com"))return url;
+  for(const dead in DEAD_STOCK)if(url.includes(dead))return url.replace(dead,DEAD_STOCK[dead]);
+  return url;
+}
 function pImg(url){
   if(!url||url.startsWith("data:")||url.startsWith("/"))return url;
-  return`/api/img?url=${encodeURIComponent(url)}`;
+  return`/api/img?url=${encodeURIComponent(liveStock(url))}`;
 }
 
 // Does this image actually load? A stored URL can look perfectly valid as a string while the
@@ -418,6 +438,136 @@ function cropToBox(dataUrl,box,maxSide=1000){
     im.onerror=()=>resolve("");
     im.src=dataUrl;
   });
+}
+
+// ─── Media import (screenshots + video) ──────────────────────────────────────
+// Re-encode a picked image as a modest JPEG. Phone screenshots are often multi-MB PNGs, and a
+// request to our server can carry only ~4.5MB in total — several screenshots must fit together.
+function shrinkImage(file,maxSide=1800,quality=.85){
+  return new Promise(resolve=>{
+    const url=URL.createObjectURL(file);
+    const im=new Image();
+    im.onload=()=>{
+      try{
+        const k=Math.min(1,maxSide/Math.max(im.naturalWidth,im.naturalHeight));
+        const c=document.createElement("canvas");
+        c.width=Math.round(im.naturalWidth*k);c.height=Math.round(im.naturalHeight*k);
+        c.getContext("2d").drawImage(im,0,0,c.width,c.height);
+        const dataUrl=c.toDataURL("image/jpeg",quality);
+        resolve({dataUrl,data:dataUrl.split(",")[1],mimeType:"image/jpeg"});
+      }catch{resolve(null);}
+      URL.revokeObjectURL(url);
+    };
+    im.onerror=()=>{URL.revokeObjectURL(url);resolve(null);};
+    im.src=url;
+  });
+}
+
+// Send a video from the phone straight to Gemini's file store. Our server only opens the upload
+// session (so the API key never reaches the browser); the bytes go directly to Google, because a
+// video is far beyond what a Vercel function can accept. onProgress receives 0-100.
+async function uploadVideo(file,onProgress){
+  const s=await fetch("/api/video-session",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({size:file.size,mimeType:file.type||"video/mp4"})}).then(r=>r.json()).catch(()=>({}));
+  if(!s.ok)throw new Error(s.error||"Couldn't start the video upload");
+  return await new Promise((resolve,reject)=>{
+    const x=new XMLHttpRequest(); // not fetch: only XHR reports upload progress
+    x.open("POST",s.uploadUrl);
+    x.setRequestHeader("X-Goog-Upload-Offset","0");
+    x.setRequestHeader("X-Goog-Upload-Command","upload, finalize");
+    x.upload.onprogress=e=>{if(e.lengthComputable&&onProgress)onProgress(Math.round(e.loaded/e.total*100));};
+    x.onload=()=>{
+      try{const f=JSON.parse(x.responseText).file;
+        if(x.status===200&&f?.uri)resolve({name:f.name,uri:f.uri,mimeType:f.mimeType});
+        else reject(new Error("Video upload failed"));
+      }catch{reject(new Error("Video upload failed"));}
+    };
+    x.onerror=()=>reject(new Error("Video upload failed — check your connection"));
+    x.send(file);
+  });
+}
+
+// One frame of a local video, at `seconds` (or, if that's null, at `fraction` of the way through),
+// as a JPEG. Used for the recipe picture, at the moment the AI picked as the clearest view of the
+// finished dish. Resolves "" on failure.
+function videoFrame(file,seconds,maxSide=1000,fraction=null){
+  return new Promise(resolve=>{
+    const url=URL.createObjectURL(file);
+    const v=document.createElement("video");
+    let settled=false;
+    const finish=val=>{if(settled)return;settled=true;clearTimeout(t);URL.revokeObjectURL(url);resolve(val);};
+    const t=setTimeout(()=>finish(""),15000);
+    v.muted=true;v.playsInline=true;v.preload="auto";
+    let probing=false; // some recordings (WebM) report their length only after a seek to the end
+    const seekTo=d=>{
+      // Fraction mode stays a second clear of the end — screen recordings often finish on the
+      // user stopping the recording rather than on the video itself.
+      const at=seconds==null&&fraction!=null?Math.min(d*fraction,d-1):(seconds||0);
+      v.currentTime=Math.max(0,Math.min(at,Math.max(0,d-0.1)));
+    };
+    v.onloadedmetadata=()=>{
+      if(Number.isFinite(v.duration))seekTo(v.duration);
+      else{probing=true;v.currentTime=1e9;}
+    };
+    v.onseeked=()=>{
+      if(probing){probing=false;seekTo(Number.isFinite(v.duration)?v.duration:0);return;}
+      try{
+        const k=Math.min(1,maxSide/Math.max(v.videoWidth,v.videoHeight));
+        const c=document.createElement("canvas");
+        c.width=Math.round(v.videoWidth*k);c.height=Math.round(v.videoHeight*k);
+        c.getContext("2d").drawImage(v,0,0,c.width,c.height);
+        finish(c.toDataURL("image/jpeg",.85));
+      }catch{finish("");}
+    };
+    v.onerror=()=>finish("");
+    v.src=url;
+  });
+}
+
+// Turn picked files into what /api/parse takes: up to four screenshots (shrunk), plus at most one
+// video (uploaded). `preview` is something to show while the AI reads it.
+async function prepareMedia(files,onProgress){
+  const vids=files.filter(f=>(f.type||"").startsWith("video/"));
+  const imgs=files.filter(f=>(f.type||"").startsWith("image/"));
+  if(vids.length>1)throw new Error("Pick one video at a time — screenshots can go alongside it.");
+  if(imgs.length>4)throw new Error("Up to 4 screenshots at a time.");
+  if(!vids.length&&!imgs.length)throw new Error("That file isn't a photo or video.");
+  const images=(await Promise.all(imgs.map(f=>shrinkImage(f)))).filter(Boolean);
+  if(imgs.length&&images.length<imgs.length)throw new Error("Couldn't read one of those images.");
+  const videoFile=vids[0]||null;
+  const preview=images[0]?.dataUrl||(videoFile?await videoFrame(videoFile,0.5,300):"");
+  const video=videoFile?await uploadVideo(videoFile,onProgress):null;
+  return{images,video,videoFile,preview};
+}
+
+function parseMedia(media,extra={}){
+  return fetch("/api/parse",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({...extra,images:media.images.map(({data,mimeType})=>({data,mimeType})),video:media.video})})
+    .then(r=>r.json()).catch(()=>({ok:false,error:"Couldn't reach the server — check your connection"}));
+}
+
+// The recipe picture, cut from the user's own media where the AI said the dish is: a frame of the
+// video, or a region of a screenshot. "" if neither works out (caller falls back to stock).
+async function photoFromMedia(data,media){
+  const p=data.photo||(data.photoBox?{source:"image",index:0,box:data.photoBox}:null);
+  if(p?.source==="video"&&media.videoFile){
+    const frame=await videoFrame(media.videoFile,p.seconds);
+    if(frame){
+      if(p.box){const c=await cropToBox(frame,p.box);if(c)return c;}
+      return frame;
+    }
+  }
+  if(p?.source==="image"&&p.box){
+    const img=media.images[p.index||0];
+    if(img){const c=await cropToBox(img.dataUrl,p.box);if(c)return c;}
+  }
+  // The AI didn't single out a moment, but the user gave us their actual video — a frame near the
+  // end (where reels usually show the finished dish) beats a generic stock photo.
+  if(media.videoFile){
+    const f=await videoFrame(media.videoFile,null,1000,0.9);
+    if(f)return f;
+  }
+  return "";
 }
 
 // ─── Recipe image ─────────────────────────────────────────────────────────────
@@ -1033,6 +1183,10 @@ function EditModal({recipe,onSave,onClose}){
   const ingToStr=ing=>typeof ing==="string"?ing:fmtIng(ing,"original",1);
   const[refreshing,setRefreshing]=useState(false);
   const[refreshMsg,setRefreshMsg]=useState("");
+  const[replacing,setReplacing]=useState(false);
+  const replaceRef=useRef(null);
+  // Fields replaced from media that the form doesn't show (nutrition, the photo flag); merged in on Save
+  const[replaced,setReplaced]=useState({});
   const[form,setForm]=useState({
     title:recipe.title||"",
     description:recipe.description||"",
@@ -1098,10 +1252,49 @@ function EditModal({recipe,onSave,onClose}){
     setRefreshing(false);
   }
 
+  // Replace the recipe's content from screenshots and/or a screen recording of the post. Unlike AI
+  // Refresh (which only fills gaps from the original link), this overwrites — the point is to fix
+  // a recipe that came in wrong. Link, notes, favourite, cookbooks and cook history are kept, and
+  // nothing is saved until the user taps Save.
+  async function handleReplace(e){
+    const files=Array.from(e.target.files||[]);
+    e.target.value="";
+    if(!files.length)return;
+    setReplacing(true);setRefreshMsg("");
+    try{
+      const media=await prepareMedia(files,pct=>setRefreshMsg(`⟳ Uploading video… ${pct}%`));
+      setRefreshMsg(media.video?"⟳ Watching the video…":"⟳ Reading…");
+      const data=await parseMedia(media);
+      if(!data.ok)throw new Error(data.error||"Couldn't read a recipe from that");
+      const r=data.recipe||{};
+      const photo=await photoFromMedia(data,media);
+      setForm(f=>({...f,
+        title:r.title||f.title,
+        description:r.description||"",
+        servings:r.servings||f.servings,
+        prepTime:r.prepTime||"",
+        cookTime:r.cookTime||"",
+        tags:(r.tags||[]).length?r.tags.join(", "):f.tags,
+        emoji:r.emoji||f.emoji,
+        ingredientsText:(r.ingredients||[]).map(ingToStr).join("\n"),
+        stepsText:(r.steps||[]).join("\n"),
+        // Notes may be the user's own — add the post's tips (freezing etc.) rather than overwrite
+        notes:f.notes&&r.notes&&!f.notes.includes(r.notes)?`${f.notes}\n\n${r.notes}`:(f.notes||r.notes||""),
+        ...(photo?{ogImage:photo}:{}),
+      }));
+      setReplaced({...(r.nutrition?{nutrition:r.nutrition}:{}),...(photo?{imgEnriched:true}:{})});
+      const shots=media.images.length>1?"screenshots":"screenshot";
+      const what=media.video?(media.images.length?`video and ${shots}`:"video"):shots;
+      setRefreshMsg(`✓ Replaced from your ${what} — check it over, then tap Save`);
+    }catch(err){setRefreshMsg("✗ "+(err.message||"Replace failed"));}
+    setReplacing(false);
+  }
+
   function handleSave(){
     const updated={
       ...recipe,
       ...form,
+      ...replaced,
       servings:parseInt(form.servings)||4,
       tags:form.tags.split(",").map(t=>t.trim().toLowerCase()).filter(Boolean),
       ingredients:form.ingredientsText.split("\n").filter(l=>l.trim()).map(line=>{
@@ -1127,15 +1320,21 @@ function EditModal({recipe,onSave,onClose}){
             <button onClick={handleSave} className="btn-primary" style={{padding:"7px 16px",fontSize:13,borderRadius:20}}>Save ✓</button>
           </div>
         </div>
-        {(form.url||recipe.url)&&(
-          <div style={{padding:"0 18px 12px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-            <button onClick={handleAiRefresh} disabled={refreshing}
-              style={{display:"flex",alignItems:"center",gap:6,background:"var(--sage-pale)",border:"1.5px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:refreshing?"wait":"pointer",color:"var(--moss)",opacity:refreshing?.7:1}}>
+        <div style={{padding:"0 18px 12px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          {(form.url||recipe.url)&&(
+            <button onClick={handleAiRefresh} disabled={refreshing||replacing}
+              style={{display:"flex",alignItems:"center",gap:6,background:"var(--sage-pale)",border:"1.5px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:refreshing?"wait":"pointer",color:"var(--moss)",opacity:refreshing||replacing?.7:1}}>
               {refreshing?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span> Searching deeper…</>:<>🔍 AI Refresh</>}
             </button>
-            {refreshMsg&&<span style={{fontSize:12,color:refreshMsg.startsWith("✓")?"var(--moss)":refreshMsg.startsWith("ℹ")?"var(--mist)":"#991B1B",flex:1}}>{refreshMsg}</span>}
-          </div>
-        )}
+          )}
+          <input ref={replaceRef} type="file" accept="image/*,video/*" multiple onChange={handleReplace} style={{display:"none"}}/>
+          <button onClick={()=>replaceRef.current?.click()} disabled={refreshing||replacing}
+            title="Rewrite this recipe from screenshots and/or a screen recording of the post"
+            style={{display:"flex",alignItems:"center",gap:6,background:"var(--cream)",border:"1.5px solid var(--sage-lt)",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:replacing?"wait":"pointer",color:"var(--moss)",opacity:refreshing||replacing?.7:1}}>
+            {replacing?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span> Replacing…</>:<>📷 Replace from screenshot / video</>}
+          </button>
+          {refreshMsg&&<span style={{fontSize:12,color:refreshMsg.startsWith("✓")?"var(--moss)":/^[ℹ⟳]/.test(refreshMsg)?"var(--mist)":"#991B1B",flexBasis:"100%"}}>{refreshMsg}</span>}
+        </div>
 
         <div style={{padding:"0 18px 24px",display:"flex",flexDirection:"column",gap:12}}>
           {/* Title + emoji row */}
@@ -1523,14 +1722,15 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
     return recipes.find(r=>r.url&&norm(r.url)===norm(text.trim()))||null;
   }
 
-  function callParse(text,imageBase64,imageMediaType,robust){
+  function callParse(text,robust){
     return fetch("/api/parse",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({input:text,imageBase64,imageMediaType,robust})}).then(r=>r.json());
+      body:JSON.stringify({input:text,robust})}).then(r=>r.json());
   }
 
-  // sourceUrl/partial: set when this is a screenshot standing in for a link that failed to
-  // import — the saved recipe keeps that link, plus anything the link itself gave up.
-  async function parseAndSave({text="",imageBase64="",imageMediaType="image/jpeg",force=false,sourceUrl="",partial=null}){
+  // files: screenshots and/or a video picked under Photo. sourceUrl/partial: set when that media is
+  // standing in for a link that failed to import — the saved recipe keeps that link, plus anything
+  // the link itself gave up.
+  async function parseAndSave({text="",files=null,force=false,sourceUrl="",partial=null}){
     if(!force&&text.trim().startsWith("http")){
       const dup=checkDuplicate(text);
       if(dup){setDupWarning(dup);return;}
@@ -1540,27 +1740,35 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
     const isLink=text.trim().startsWith("http");
     let linkPartial=null; // whatever the failed link returned, for the screenshot fallback
     try{
-      // Phase 1 — quick methods (fast: oEmbed / page HTML / Microlink)
-      let data=await callParse(text,imageBase64,imageMediaType,false);
-      linkPartial=data.partial||linkPartial;
-      // Phase 2 — if a social link failed the quick way, escalate to the robust scraper.
-      // It's slower (cold start), so warn the user why the wait is longer.
-      const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(text);
-      if(!data.ok && isSocial && text.trim().startsWith("http")){
-        // Only surface the "taking longer" notice if the retry is actually slow —
-        // most retries finish in a few seconds and shouldn't alarm the user.
-        const slowTimer=setTimeout(()=>setLoadMsg("Fetching the full post from Instagram — hang tight…"),4000);
-        try{
-          // The first Apify call after idle cold-starts the scraper and often times out; that
-          // call warms it, so a retry moments later succeeds. Auto-retry a few times so the
-          // user doesn't see a failure that would fix itself.
-          for(let attempt=0; attempt<3 && !data.ok; attempt++){
-            if(attempt>0){ setLoadMsg("Still fetching that post — almost there…"); await new Promise(r=>setTimeout(r,2500)); }
-            data=await callParse(text,imageBase64,imageMediaType,true);
-            linkPartial=data.partial||linkPartial;
+      let data,media=null;
+      if(files?.length){
+        media=await prepareMedia(files,pct=>setLoadMsg(`Uploading video… ${pct}%`));
+        if(media.preview)setImgPreview(media.preview);
+        setLoadMsg(media.video?"Watching the video…":"");
+        data=await parseMedia(media);
+      }else{
+        // Phase 1 — quick methods (fast: oEmbed / page HTML / Microlink)
+        data=await callParse(text,false);
+        linkPartial=data.partial||linkPartial;
+        // Phase 2 — if a social link failed the quick way, escalate to the robust scraper.
+        // It's slower (cold start), so warn the user why the wait is longer.
+        const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(text);
+        if(!data.ok && isSocial && isLink){
+          // Only surface the "taking longer" notice if the retry is actually slow —
+          // most retries finish in a few seconds and shouldn't alarm the user.
+          const slowTimer=setTimeout(()=>setLoadMsg("Fetching the full post from Instagram — hang tight…"),4000);
+          try{
+            // The first Apify call after idle cold-starts the scraper and often times out; that
+            // call warms it, so a retry moments later succeeds. Auto-retry a few times so the
+            // user doesn't see a failure that would fix itself.
+            for(let attempt=0; attempt<3 && !data.ok; attempt++){
+              if(attempt>0){ setLoadMsg("Still fetching that post — almost there…"); await new Promise(r=>setTimeout(r,2500)); }
+              data=await callParse(text,true);
+              linkPartial=data.partial||linkPartial;
+            }
           }
+          finally{ clearTimeout(slowTimer); }
         }
-        finally{ clearTimeout(slowTimer); }
       }
       if(!data.ok)throw new Error(data.error||"Couldn't parse — try manual entry.");
       const r=data.recipe||{};
@@ -1568,20 +1776,17 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       if(!r.title&&!(r.ingredients||[]).length&&!(r.steps||[]).length){
         throw new Error("Couldn't extract a recipe — try a different link or manual entry.");
       }
-      // Photo import: if the AI located the actual food photograph inside the upload (e.g. a
-      // screenshot of a post), crop to just that. Falls back to the whole upload if the crop
-      // can't be made, and to the server's stock photo when the upload had no food photo at all.
-      let ogImage = data.ogImage || "", cropped = "";
-      if(imageBase64 && data.photoBox){
-        cropped = await cropToBox(`data:${imageMediaType};base64,${imageBase64}`, data.photoBox);
-        if(cropped) ogImage = cropped;
-      }
-      // Screenshot standing in for a failed link: carry over what the link itself gave up.
+      // Media import: cut the recipe picture out of the user's own video or screenshot where the AI
+      // located the dish. Falls back to what the failed link gave up, then the server's stock photo,
+      // then the first screenshot whole.
+      let ogImage=data.ogImage||"";
+      const fromMedia=media?await photoFromMedia(data,media):"";
+      if(fromMedia)ogImage=fromMedia;
       // Social links are excluded for title/photo — what they return anonymously is the
       // login page's ("Instagram", a logo), not the post's.
       const srcSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(sourceUrl);
-      if(!cropped && partial?.image && !srcSocial) ogImage = partial.image; // a real photo of it beats a stock one
-      if(!ogImage && imageBase64) ogImage = `data:${imageMediaType};base64,${imageBase64}`;
+      if(!fromMedia && partial?.image && !srcSocial) ogImage = partial.image; // a real photo of it beats a stock one
+      if(!ogImage && media?.images[0]) ogImage = media.images[0].dataUrl;
       let srcName="";
       if(sourceUrl){
         srcName=/instagram\.com/i.test(sourceUrl)?"Instagram":/tiktok\.com/i.test(sourceUrl)?"TikTok":/facebook\.com|fb\.watch/i.test(sourceUrl)?"Facebook":"";
@@ -1590,7 +1795,10 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       onAdd({id:Date.now().toString(),...r,
         title:r.title||(!srcSocial&&partial?.title)||"",
         source:r.source||srcName,
-        ogImage,url:isLink?text.trim():sourceUrl,savedAt:Date.now()});
+        ogImage,url:isLink?text.trim():sourceUrl,savedAt:Date.now(),
+        // A picture taken from the user's own media: don't let the automatic social photo
+        // upgrade replace it with the post's thumbnail.
+        ...(fromMedia?{imgEnriched:true}:{})});
       onClose();
     }catch(e){
       const m=e.message||"Couldn't parse — try manual entry.";
@@ -1617,25 +1825,36 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
   }
 
   function handleFile(e){
-    const file=e.target.files?.[0];
-    if(!file)return;
-    const reader=new FileReader();
-    reader.onload=ev=>{
-      const dataUrl=ev.target.result;
-      const base64=dataUrl.split(",")[1];
-      setImgPreview(dataUrl);
-      if(photoMode==="nutrition"){scanIngredients(base64,file.type||"image/jpeg");}
-      else{parseAndSave({imageBase64:base64,imageMediaType:file.type||"image/jpeg",sourceUrl:failedLink?.url||"",partial:failedLink?.partial||null});}
-    };
-    reader.readAsDataURL(file);
+    const files=Array.from(e.target.files||[]);
     e.target.value=""; // let the same file be picked again after a failed attempt
+    if(!files.length)return;
+    if(photoMode==="nutrition"){
+      const file=files.find(f=>(f.type||"").startsWith("image/"));
+      if(!file){setError("Pick a photo of your food or ingredients.");return;}
+      const reader=new FileReader();
+      reader.onload=ev=>{
+        const dataUrl=ev.target.result;
+        setImgPreview(dataUrl);
+        scanIngredients(dataUrl.split(",")[1],file.type||"image/jpeg");
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+    setImgPreview(null);
+    parseAndSave({files,sourceUrl:failedLink?.url||"",partial:failedLink?.partial||null});
   }
-  // Open the photo library for a screenshot (not the camera)
+  // "camera": take one photo. "library": photos, screenshots and/or a screen recording, several at
+  // once (just one photo for an ingredient scan).
+  function openPicker(kind,scan=photoMode==="nutrition"){
+    const el=fileRef.current;if(!el)return;
+    if(kind==="camera"){el.setAttribute("capture","environment");el.accept="image/*";el.multiple=false;}
+    else{el.removeAttribute("capture");el.accept=scan?"image/*":"image/*,video/*";el.multiple=!scan;}
+    el.click();
+  }
+  // From the failed-link card: screenshots or a screen recording of the post (not the camera)
   function pickScreenshot(){
-    if(!fileRef.current)return;
     setPhotoMode("recipe");
-    fileRef.current.removeAttribute("capture");
-    fileRef.current.click();
+    openPicker("library",false);
   }
   // Fallback of last resort: keep the link as a manual entry so it isn't lost
   function saveLinkManually(){
@@ -1662,7 +1881,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       <div style={{background:"var(--cream)",borderRadius:"var(--r-xl)",padding:"36px 32px",textAlign:"center",boxShadow:"var(--sh-xl)",border:"1px solid rgba(255,255,255,.8)",minWidth:220}}>
         {imgPreview&&<img src={imgPreview} style={{width:80,height:80,objectFit:"cover",borderRadius:12,marginBottom:14}}/>}
         {!imgPreview&&<div style={{fontSize:44,marginBottom:14}}>{photoMode==="nutrition"?"🥦":"🌿"}</div>}
-        <div className="serif" style={{fontWeight:600,fontSize:20,color:"var(--forest)",marginBottom:6}}>{loadMsg?"Still working…":photoMode==="nutrition"?"Scanning ingredients…":"Reading recipe…"}</div>
+        <div className="serif" style={{fontWeight:600,fontSize:20,color:"var(--forest)",marginBottom:6}}>{/^Uploading|^Watching/.test(loadMsg)?"Reading the video…":loadMsg?"Still working…":photoMode==="nutrition"?"Scanning ingredients…":"Reading recipe…"}</div>
         <div style={{fontSize:13,color:"var(--mist)",lineHeight:1.5}}>{loadMsg||(photoMode==="nutrition"?"AI is analysing ingredients & nutrition":"AI is extracting ingredients & steps")}</div>
       </div>
     </div>
@@ -1687,7 +1906,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
         <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} style={{display:"none"}}/>
 
         {tab==="paste"&&<>
-          <textarea value={input} onChange={e=>{setInput(e.target.value);setDupWarning(null);setFailedLink(null);}} placeholder={"Paste a recipe URL or text…\n\nTip: for Instagram or TikTok, a screenshot under Photo works best"} style={{...inp,minHeight:110,resize:"none"}}/>
+          <textarea value={input} onChange={e=>{setInput(e.target.value);setDupWarning(null);setFailedLink(null);}} placeholder={"Paste a recipe URL or text…\n\nTip: for Instagram or TikTok, screenshots or a screen recording under Photo work best"} style={{...inp,minHeight:110,resize:"none"}}/>
           {dupWarning&&(
             <div style={{background:"#FEF3C7",border:"1px solid #FCD34D",borderRadius:12,padding:"10px 13px",fontSize:13,color:"#92400E",marginTop:8}}>
               ⚠️ <strong>"{dupWarning.title}"</strong> is already in your pantry.
@@ -1703,13 +1922,13 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
             <div style={{background:"var(--cream)",border:"1px solid var(--sage-lt)",borderRadius:12,padding:"12px 13px",marginTop:8}}>
               <div style={{fontSize:13,fontWeight:700,color:"var(--forest)",marginBottom:3}}>Save it another way</div>
               <div style={{fontSize:12,color:"var(--mist)",lineHeight:1.5,marginBottom:10}}>The link stays attached to the recipe either way.</div>
-              <button onClick={pickScreenshot} className="btn-primary" style={{width:"100%",padding:"12px 0",borderRadius:"var(--r-md)"}}>📷 Add a screenshot of the post</button>
+              <button onClick={pickScreenshot} className="btn-primary" style={{width:"100%",padding:"12px 0",borderRadius:"var(--r-md)"}}>📷 Add screenshots or a screen recording</button>
               <button onClick={saveLinkManually} style={{width:"100%",padding:"10px 0",marginTop:8,borderRadius:"var(--r-md)",border:"1px solid var(--sage-lt)",background:"transparent",color:"var(--moss)",fontSize:13,fontWeight:700,cursor:"pointer"}}>✏️ Just save the link for now</button>
             </div>
           )}
           {!dupWarning&&<button onClick={()=>parseAndSave({text:input})} disabled={!input.trim()} className="btn-primary" style={{width:"100%",padding:"14px 0",marginTop:10,borderRadius:"var(--r-md)",opacity:input.trim()?1:.6,...(failedLink?{background:"transparent",color:"var(--moss)",border:"1px solid var(--sage-lt)",boxShadow:"none"}:{})}}>{failedLink?"Try the link again":"Save with AI ✦"}</button>}
           <div style={{marginTop:10,padding:"10px 13px",background:"var(--sage-pale)",borderRadius:12,fontSize:12,color:"var(--forest)",lineHeight:1.65,border:"1px solid var(--sage-lt)"}}>
-            💡 <strong>Recipe sites:</strong> paste the URL directly.<br/><strong>Instagram / TikTok:</strong> try the link — if it won't import, screenshot the post with its caption showing and add it under <strong>📷 Photo</strong>. The dish photo is kept too.
+            💡 <strong>Recipe sites:</strong> paste the URL directly.<br/><strong>Instagram / TikTok:</strong> try the link — if it won't import, add the post under <strong>📷 Photo</strong>: a screenshot of the caption, plus a screen recording if the method is only in the video. The dish photo is kept too.
           </div>
         </>}
 
@@ -1748,17 +1967,17 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
             </div>
           ):(
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
-            <button onClick={()=>{ if(fileRef.current){fileRef.current.setAttribute("capture","environment");fileRef.current.click();} }}
+            <button onClick={()=>openPicker("camera")}
               style={{...inp,border:"2px dashed var(--sage-lt)",borderRadius:"var(--r-lg)",padding:"28px 20px",textAlign:"center",cursor:"pointer",background:"var(--sage-pale)",color:"var(--moss)"}}>
               <div style={{fontSize:36,marginBottom:8}}>📸</div>
               <div style={{fontWeight:700,fontSize:15}}>Take a photo</div>
               <div style={{fontSize:13,color:"var(--mist)",marginTop:4}}>{photoMode==="nutrition"?"Point camera at your ingredients or meal":"Point camera at a recipe or cookbook page"}</div>
             </button>
-            <button onClick={()=>{ if(fileRef.current){fileRef.current.removeAttribute("capture");fileRef.current.click();} }}
+            <button onClick={()=>openPicker("library")}
               style={{...inp,border:"2px dashed var(--sage-lt)",borderRadius:"var(--r-lg)",padding:"22px 20px",textAlign:"center",cursor:"pointer",background:"var(--cream)",color:"var(--moss)"}}>
               <div style={{fontSize:32,marginBottom:6}}>🖼️</div>
               <div style={{fontWeight:700,fontSize:14}}>Choose from library</div>
-              <div style={{fontSize:12,color:"var(--mist)",marginTop:3}}>{photoMode==="nutrition"?"A photo of your food or ingredients":"A recipe photo, or a screenshot of an Instagram / TikTok post with its caption"}</div>
+              <div style={{fontSize:12,color:"var(--mist)",marginTop:3}}>{photoMode==="nutrition"?"A photo of your food or ingredients":"A recipe photo, screenshots of a post, or a screen recording of a reel — pick several together, like the video plus its caption"}</div>
             </button>
           </div>
           )}
@@ -3565,7 +3784,7 @@ async function storeImagePermanently(url,recipeId,userId,onErr){
   const inline=url.startsWith("data:");
   try{
     const sb=getSupabase();if(!sb){onErr&&onErr("not signed in");return url;}
-    const res=await fetch(inline?url:`/api/img?url=${encodeURIComponent(url)}`);
+    const res=await fetch(inline?url:`/api/img?url=${encodeURIComponent(liveStock(url))}`);
     if(!res.ok||!res.headers.get("content-type")?.startsWith("image/")){onErr&&onErr("image source dead");return url;}
     const blob=await res.blob();
     const ext=blob.type.includes("png")?"png":blob.type.includes("webp")?"webp":"jpg";
@@ -3802,7 +4021,10 @@ function AppInner(){
     (async()=>{
       // Social posts: fetch a full-res image via Apify + permanent re-host (server-side,
       // avoids the browser CORS block on Instagram CDN), then swap it in when ready.
-      if(isSocial){
+      // Skipped when the picture came from the user's own screenshot or video (imgEnriched):
+      // it would only replace their choice with the post's thumbnail — and for a post that
+      // wouldn't import by link, it's a scraper call that's bound to fail anyway.
+      if(isSocial&&!r.imgEnriched){
         try{
           const res=await fetch("/api/enrich-image",{method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({url:r.url,recipeId:r.id,userId:uid})});
@@ -3842,7 +4064,19 @@ function AppInner(){
   }
   function updateRecipe(r){
     const u=recipes.map(x=>x.id===r.id?r:x);setRecipes(u);save(KEYS.r,u);
-    if(session)cloudUpsert(r,session.user.id).then(()=>setSyncStatus("synced"));
+    if(!session)return;
+    const uid=session.user.id;
+    cloudUpsert(r,uid).then(()=>setSyncStatus("synced"));
+    // A photo the user just supplied (Change photo, Replace from screenshot / video) is still
+    // embedded in the recipe — move it to permanent storage, then save the hosted URL instead.
+    if(r.ogImage?.startsWith("data:")){
+      storeImagePermanently(r.ogImage,r.id,uid).then(url=>{
+        if(!url||url===r.ogImage)return;
+        const hosted={...r,ogImage:url};
+        setRecipes(prev=>{const n=prev.map(x=>x.id===r.id&&x.ogImage===r.ogImage?{...x,ogImage:url}:x);save(KEYS.r,n);return n;});
+        cloudUpsert(hosted,uid);
+      });
+    }
   }
 
   // Re-store images for already-saved recipes so expired CDN links get replaced with permanent

@@ -5,10 +5,15 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.86";
+const APP_VERSION = "2.87";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.87", title:"Ask about this recipe", major:true, items:[
+    "Every recipe now has a 💬 Ask box — e.g. \"I don't have bay leaves, what can I use?\", \"Can I freeze this?\", \"What goes with it?\"",
+    "Answers know the recipe, including the serving size you've scaled it to, and you can ask follow-ups",
+    "Tap 📝 Save to My Notes to keep a useful answer with the recipe — answers never change the recipe itself",
+  ]},
   { v:"2.86", title:"Instagram reels: the method from the video, automatically", major:true, items:[
     "Just paste a reel's link — if the caption doesn't include the method, the AI watches the video too, so steps that are only spoken or shown on screen come through",
     "Reels whose caption already has the full recipe still import in a few seconds — the video is only watched when it's needed",
@@ -262,6 +267,7 @@ const PRO_FEATURES = [
   { icon:"🏠", name:"Pantry Tracker", desc:"Mark the ingredients you always have at home. The grocery list automatically hides pantry staples so your shopping list only shows what you actually need to buy." },
   { icon:"✨", name:"Smart Weekly Planner", desc:"Tap 'Plan week' and the app fills your week automatically — picking from your highest-rated recipes and mixing up the variety so every day feels different." },
   { icon:"🎙️", name:"Voice Cook Mode", desc:"Cook completely hands-free. Say 'next', 'back', 'repeat', or 'timer' and the app responds — no need to touch your phone with floury hands." },
+  { icon:"💬", name:"Ask about this recipe", desc:"Missing an ingredient? Ask \"I don't have bay leaves — what can I use?\" and get an answer that knows this exact recipe and the serving size you're cooking. Follow-up questions work too, and useful answers can be saved to your notes." },
 ];
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
@@ -1443,6 +1449,87 @@ function EditModal({recipe,onSave,onClose}){
   );
 }
 
+// ─── Ask about this recipe ────────────────────────────────────────────────────
+// Questions about the recipe in front of you (substitutions, scaling, make-ahead…), answered with
+// the recipe as context. Advice only: nothing here changes the recipe. A useful answer can be
+// saved to My Notes.
+// [PRO] Ask about this recipe — when gated, pair it with a per-user usage cap (each question costs
+// AI credit), set so a subscriber's AI cost stays well below the subscription price.
+const ASK_SUGGESTIONS=[
+  {label:"🔄 Swap an ingredient",fill:"I don't have "},
+  {label:"🌱 Make it vegetarian",ask:"How could I make this vegetarian?"},
+  {label:"🧊 Make ahead or freeze?",ask:"Can I make this ahead of time, or freeze it?"},
+  {label:"🍽️ What goes with it?",ask:"What would go well with this?"},
+];
+function AskRecipe({recipe,servings,onSaveNote}){
+  const[q,setQ]=useState("");
+  const[thread,setThread]=useState([]); // [{q,a,pending?,err?}]
+  const[asking,setAsking]=useState(false);
+  const[saved,setSaved]=useState({});
+  const inputRef=useRef(null);
+  useEffect(()=>{setQ("");setThread([]);setSaved({});},[recipe?.id]);
+
+  async function ask(question){
+    const text=(question??q).trim();
+    if(!text||asking)return;
+    setAsking(true);setQ("");
+    const idx=thread.length;
+    // Earlier answered turns go along so follow-ups ("what about for 8?") make sense
+    const history=thread.filter(t=>t.a&&!t.err).map(({q,a})=>({q,a}));
+    setThread(t=>[...t,{q:text,a:"",pending:true}]);
+    const r=recipe;
+    const d=await fetch("/api/ask",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({question:text,history,servings,
+        recipe:{title:r.title,description:r.description,servings:r.servings,prepTime:r.prepTime,cookTime:r.cookTime,ingredients:r.ingredients,steps:r.steps,notes:r.notes}})})
+      .then(res=>res.json()).catch(()=>({ok:false,error:"Couldn't reach the server — check your connection"}));
+    setThread(t=>t.map((x,i)=>i===idx?{q:text,a:d.ok?d.answer:(d.error||"Couldn't get an answer"),err:!d.ok}:x));
+    setAsking(false);
+  }
+
+  function pickSuggestion(s){
+    if(s.ask){ask(s.ask);return;}
+    // "I don't have …" — leave the cursor ready for the ingredient
+    setQ(s.fill);
+    setTimeout(()=>{const el=inputRef.current;if(el){el.focus();el.setSelectionRange(s.fill.length,s.fill.length);}},0);
+  }
+
+  return(
+    <div style={{background:"var(--cream)",borderRadius:"var(--r-md)",padding:"13px 14px",marginBottom:16,border:"1px solid var(--sage-lt)"}}>
+      <div style={{fontSize:13,fontWeight:700,color:"var(--forest)"}}>💬 Ask about this recipe</div>
+      <div style={{fontSize:11,color:"var(--mist)",marginTop:2,marginBottom:10}}>Swaps, scaling, timing — answers are suggestions and never change the recipe</div>
+      {thread.map((t,i)=>(
+        <div key={i} style={{marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:600,color:"var(--ink)",marginBottom:5}}>{t.q}</div>
+          {t.pending
+            ?<div style={{fontSize:13,color:"var(--mist)"}}><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span> Thinking…</div>
+            :<div style={{fontSize:13,lineHeight:1.65,whiteSpace:"pre-wrap",color:t.err?"#991B1B":"var(--bark)",background:t.err?"transparent":"var(--sage-pale)",borderRadius:10,padding:t.err?0:"8px 11px"}}>{t.a}</div>}
+          {!t.pending&&!t.err&&(
+            <button onClick={()=>{onSaveNote(`${t.q}\n${t.a}`);setSaved(s=>({...s,[i]:true}));}} disabled={!!saved[i]}
+              style={{marginTop:5,background:"none",border:"none",padding:0,fontSize:12,fontWeight:600,color:saved[i]?"var(--mist)":"var(--moss)",cursor:saved[i]?"default":"pointer"}}>
+              {saved[i]?"✓ Saved to My Notes":"📝 Save to My Notes"}
+            </button>
+          )}
+        </div>
+      ))}
+      {!thread.length&&(
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+          {ASK_SUGGESTIONS.map(s=>(
+            <button key={s.label} onClick={()=>pickSuggestion(s)} disabled={asking}
+              style={{background:"var(--sage-pale)",border:"1px solid var(--sage-lt)",borderRadius:20,padding:"5px 11px",fontSize:12,fontWeight:600,color:"var(--moss)",cursor:"pointer"}}>{s.label}</button>
+          ))}
+        </div>
+      )}
+      <div style={{display:"flex",gap:8}}>
+        <input ref={inputRef} value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")ask();}} maxLength={500}
+          placeholder={thread.length?"Ask a follow-up…":"e.g. I don't have bay leaves — what can I use?"}
+          style={{flex:1,minWidth:0,background:"var(--linen)",border:"1.5px solid var(--sage-lt)",borderRadius:20,padding:"9px 14px",fontSize:13,outline:"none",color:"var(--ink)"}}/>
+        <button onClick={()=>ask()} disabled={!q.trim()||asking} className="btn-primary"
+          style={{padding:"0 16px",borderRadius:20,fontSize:13,opacity:!q.trim()||asking?.6:1}}>Ask</button>
+      </div>
+    </div>
+  );
+}
+
 function RecipeModal({recipe,onClose,onUpdate,books=[],onToggleBook,onCreateBook}){
   const[servings,setServings]=useState(null);
   const[showBookPicker,setShowBookPicker]=useState(false);
@@ -1628,6 +1715,12 @@ function RecipeModal({recipe,onClose,onUpdate,books=[],onToggleBook,onCreateBook
           </>}
           {recipe.notes&&<p style={{fontSize:13,color:"var(--mist)",fontStyle:"italic",paddingBottom:10,lineHeight:1.65}}>{recipe.notes}</p>}
 
+          <AskRecipe recipe={recipe} servings={servings} onSaveNote={text=>{
+            // Append to the private notes rather than replacing them
+            const next=myNotes?`${myNotes}\n\n${text}`:text;
+            setMyNotes(next);onUpdate({...recipe,myNotes:next});
+          }}/>
+
           {/* Cook history + Made it */}
           <div style={{background:"var(--sage-pale)",borderRadius:"var(--r-md)",padding:"13px 14px",marginBottom:16,border:"1px solid var(--sage-lt)"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:lastCook||ratingPending?10:0}}>
@@ -1668,7 +1761,7 @@ function RecipeModal({recipe,onClose,onUpdate,books=[],onToggleBook,onCreateBook
               </div>
             ):(
               myNotes
-                ?<p style={{fontSize:13,color:"var(--bark)",lineHeight:1.65,background:"var(--cream)",borderRadius:"var(--r-md)",padding:"9px 12px",border:"1px solid var(--sage-lt)"}}>{myNotes}</p>
+                ?<p style={{fontSize:13,color:"var(--bark)",lineHeight:1.65,background:"var(--cream)",borderRadius:"var(--r-md)",padding:"9px 12px",border:"1px solid var(--sage-lt)",whiteSpace:"pre-wrap"}}>{myNotes}</p>
                 :<button onClick={()=>setNotesEditing(true)} style={{fontSize:13,color:"var(--mist)",background:"var(--sage-pale)",border:"1px dashed var(--sage-lt)",borderRadius:"var(--r-md)",padding:"9px 12px",width:"100%",textAlign:"left",cursor:"pointer"}}>+ Add a private note about this recipe…</button>
             )}
           </div>

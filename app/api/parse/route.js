@@ -1,8 +1,8 @@
 import { fetchViaApify } from "../../../lib/social";
 
-// The robust (Apify) path can cold-start slowly; raise the serverless timeout so it isn't
-// killed mid-request on the escalated social import.
-export const maxDuration = 60;
+// The robust (Apify) path can cold-start slowly, and a reel import then downloads the video and
+// has the AI watch it — allow the full 5 minutes Vercel's plan permits so it isn't killed midway.
+export const maxDuration = 300;
 
 const SOCIAL_NO_CAPTION = "Instagram/TikTok didn't share this post's caption. Add it under Photo instead — a screenshot of the caption, plus a screen recording if the method is only in the video.";
 
@@ -106,6 +106,52 @@ async function callGemini(model, parts, maxTokens, thinkingBudget = 512) {
   return { ok: res.ok && !data.error, quotaExceeded: data.error?.status === "RESOURCE_EXHAUSTED", data, text };
 }
 
+// Download a reel's video (the scraper's direct link) and put it in Gemini's file store, so a
+// pasted link alone gets the method that's only in the video. Server-to-Google, so the request-size
+// limit that forces browser uploads to go direct doesn't apply. Returns the file ref, or null —
+// in which case the import carries on with the caption alone.
+const MAX_LINK_VIDEO_BYTES = 150 * 1024 * 1024;
+async function fetchVideoToGemini(videoUrl) {
+  try {
+    const res = await fetch(videoUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1" },
+      signal: AbortSignal.timeout(45000),
+    });
+    if (!res.ok) { console.error("link video: download", res.status); return null; }
+    const declared = Number(res.headers.get("content-length")) || 0;
+    if (declared > MAX_LINK_VIDEO_BYTES) { console.error("link video: too large", declared); return null; }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (!bytes.length || bytes.length > MAX_LINK_VIDEO_BYTES) return null;
+    const mimeType = (res.headers.get("content-type") || "video/mp4").split(";")[0];
+    if (!/^video\//.test(mimeType)) { console.error("link video: not a video", mimeType); return null; }
+
+    const start = await fetch("https://generativelanguage.googleapis.com/upload/v1beta/files", {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": process.env.GEMINI_API_KEY,
+        "X-Goog-Upload-Protocol": "resumable",
+        "X-Goog-Upload-Command": "start",
+        "X-Goog-Upload-Header-Content-Length": String(bytes.length),
+        "X-Goog-Upload-Header-Content-Type": mimeType,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ file: { display_name: "recipe-link-video" } }),
+    });
+    const uploadUrl = start.headers.get("x-goog-upload-url");
+    if (!uploadUrl) { console.error("link video: no upload session", start.status); return null; }
+    const up = await fetch(uploadUrl, {
+      method: "POST",
+      headers: { "X-Goog-Upload-Offset": "0", "X-Goog-Upload-Command": "upload, finalize" },
+      body: bytes,
+    });
+    const f = (await up.json().catch(() => ({}))).file;
+    return f?.uri ? { name: f.name, uri: f.uri, mimeType: f.mimeType } : null;
+  } catch (e) {
+    console.error("link video:", e?.message);
+    return null;
+  }
+}
+
 // A video uploaded to Gemini's file store is PROCESSING for a few seconds before it can be used.
 async function waitForVideo(name, timeoutMs = 40000) {
   const t0 = Date.now();
@@ -170,10 +216,13 @@ export async function POST(req) {
   ].filter(i => i && typeof i.data === "string" && /^image\//.test(i.mimeType || "")).slice(0, 4);
   // Only accept a file reference that is genuinely one of Gemini's (it gets interpolated into
   // an API path below).
-  const video = body.video && /^files\/[a-z0-9-]+$/.test(body.video.name || "")
+  let video = body.video && /^files\/[a-z0-9-]+$/.test(body.video.name || "")
     && String(body.video.uri || "").startsWith("https://generativelanguage.googleapis.com/")
     && /^video\//.test(body.video.mimeType || "") ? body.video : null;
-  const hasMedia = images.length > 0 || !!video;
+  let hasMedia = images.length > 0 || !!video;
+  let linkVideo = false;   // the video came from the post's link (via the scraper), not an upload
+  let pendingVideoUrl = ""; // a reel's video, watched only if the caption doesn't give the method
+  let scraperImage = false; // ogImage is the scraper's full-size post image
   const isDeep = mode === "deep";
 
   // ── Nutrition scan mode ───────────────────────────────────────────────────────
@@ -202,14 +251,18 @@ export async function POST(req) {
     const isInstagram = /instagram\.com\/(p|reel|tv)\//i.test(input);
     const isTikTok = /tiktok\.com\/@[^/]+\/video\//i.test(input);
     if (isInstagram || isTikTok) {
-      // ── Robust tier: dedicated scraper (Apify). Slow cold-start, so only run when the
-      //    client escalates (robust:true) after the quick methods failed. Inert without a key.
+      // ── Robust tier: dedicated scraper (Apify). Slow cold-start; the client asks for it
+      //    (robust:true) for social links. Inert without a key.
       if (robust) {
         const ap = await fetchViaApify(input, isInstagram, isTikTok);
         if (ap.ok) {
           if (ap.caption) { caption = ap.caption; pageText = caption; }
-          if (ap.image && !ogImage) ogImage = ap.image;
+          if (ap.image && !ogImage) { ogImage = ap.image; scraperImage = true; }
           if (ap.title && !ogTitle) ogTitle = ap.title;
+          // A reel: its video may be the only place the method is. Not fetched yet — the caption is
+          // read first, and the video only watched if that finds no method (see readRecipe below).
+          // Very long videos are skipped (slow and costly to process; caption only).
+          if (ap.videoUrl && (!ap.videoDuration || ap.videoDuration <= 300)) pendingVideoUrl = ap.videoUrl;
         } else {
           apifyReason = ap.reason || "";
         }
@@ -236,7 +289,9 @@ export async function POST(req) {
 
   if (isUrl) {
     // ── Step 1: Direct fetch for page content (needed for Claude to parse the recipe) ──
-    const html = await fetchHtml(input, 6000, pageMeta);
+    // Skipped for a social post we already have the caption for: Instagram/TikTok serve us a
+    // login/app shell, and its text would otherwise REPLACE the real caption below.
+    const html = isSocial && caption ? "" : await fetchHtml(input, 6000, pageMeta);
     if (html) {
       const ex = extractFromHtml(html, ogTitle);
       if (ex.ogImage) ogImage = ex.ogImage;
@@ -299,7 +354,8 @@ export async function POST(req) {
   // Nothing was actually retrieved from the link. Handing the model a bare URL and asking it to
   // "extract recipe details" is what makes it invent a plausible recipe out of thin air — it has
   // nothing to read, but it has been given a schema to fill. Fail honestly instead of guessing.
-  if (isUrl && !pageText.trim()) {
+  // (A reel whose video we have is fine even with no caption — the video is the content.)
+  if (isUrl && !pageText.trim() && !video && !pendingVideoUrl) {
     const suffix = (robust && apifyReason) ? ` [${apifyReason}]` : "";
     const msg = isSocial
       ? SOCIAL_NO_CAPTION
@@ -358,59 +414,74 @@ Re-read the content below carefully and capture anything the first pass missed �
     ? `${deepPrefix}Extract the recipe from this content as completely as the content allows. Read it thoroughly, but never add anything it doesn't state. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`
     : `Extract recipe details from this content. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`;
 
-  // Media imports. A video is the only place many reels keep the method — spoken, or shown as
-  // on-screen text — while the ingredients often live only in the caption. So read them together.
-  const mediaIntro = video
-    ? `Extract the recipe from this cooking video${images.length ? ", together with the screenshot(s) after it (usually the post's caption)" : ""}. Watch AND listen: the method is often only spoken or shown as on-screen text, while the ingredients may only be in the caption. Combine all of it — but include only what is actually said, shown or written.`
-    : `Extract recipe details from ${images.length > 1 ? "these images — they are parts of the same post, so read them together" : "this image"}.`;
-  const photoRule = video
-    ? `- photo: add a "photo" field for the recipe picture: {"source":"video","seconds":<the moment with the clearest view of the finished dish>,"box":[ymin,xmin,ymax,xmax]}, box each 0-1000 relative to the video frame, tight around the food and excluding any app interface, captions or text overlays. Use "photo": null if no moment shows the food clearly.`
-    : `- photo: if an image includes an actual photograph of the food (it may be a screenshot of a social post, where the photo sits among captions and app buttons), add {"source":"image","index":<0-based image number>,"box":[ymin,xmin,ymax,xmax]}, each 0-1000 relative to that image, tight around the photograph and excluding caption text, profile pictures, buttons and other interface. If there is no usable food photograph (e.g. the image is only text), use "photo": null.`;
+  // One read of the content, built from the current state (with or without a video): call the
+  // model and parse its JSON. Returns { parsed, data } or { fail: <Response> }. A reel can be read
+  // twice — caption first, then with its video — so this is a function rather than inline.
+  async function readRecipe() {
+    // Media imports. A video is the only place many reels keep the method — spoken, or shown as
+    // on-screen text — while the ingredients often live only in the caption. So read them together.
+    // For a reel fetched from its link, the caption arrives as text rather than a screenshot.
+    const postText = linkVideo && pageText.trim() ? pageText : "";
+    const mediaIntro = video
+      ? `${linkVideo ? deepPrefix : ""}Extract the recipe from this cooking video${images.length ? ", together with the screenshot(s) after it (usually the post's caption)" : ""}${postText ? ", together with the post's caption given after it" : ""}. Watch AND listen: the method is often only spoken or shown as on-screen text, while the ingredients may only be in the caption. Combine all of it — but include only what is actually said, shown or written.`
+      : `Extract recipe details from ${images.length > 1 ? "these images — they are parts of the same post, so read them together" : "this image"}.`;
+    // No photo hint for a link's video: the user's phone doesn't have that video to cut a frame
+    // from, and the scraper already supplied the post's own cover image.
+    const photoRule = linkVideo ? "" : video
+      ? `- photo: add a "photo" field for the recipe picture: {"source":"video","seconds":<the moment with the clearest view of the finished dish>,"box":[ymin,xmin,ymax,xmax]}, box each 0-1000 relative to the video frame, tight around the food and excluding any app interface, captions or text overlays. Use "photo": null if no moment shows the food clearly.`
+      : `- photo: if an image includes an actual photograph of the food (it may be a screenshot of a social post, where the photo sits among captions and app buttons), add {"source":"image","index":<0-based image number>,"box":[ymin,xmin,ymax,xmax]}, each 0-1000 relative to that image, tight around the photograph and excluding caption text, profile pictures, buttons and other interface. If there is no usable food photograph (e.g. the image is only text), use "photo": null.`;
 
-  const parts = hasMedia
-    ? [
-        ...(video ? [{ file_data:{ mime_type:video.mimeType, file_uri:video.uri } }] : []),
-        ...images.map(i => ({ inline_data:{ mime_type:i.mimeType, data:i.data } })),
-        { text:`${mediaIntro} Return ONLY raw JSON, no markdown:\n\n${schema}\n\n${rules}\n${photoRule}` },
-      ]
-    : [{ text:prompt }];
+    const parts = hasMedia
+      ? [
+          ...(video ? [{ file_data:{ mime_type:video.mimeType, file_uri:video.uri } }] : []),
+          ...images.map(i => ({ inline_data:{ mime_type:i.mimeType, data:i.data } })),
+          ...(postText ? [{ text:`Post caption:\n${postText}` }] : []),
+          { text:`${mediaIntro} Return ONLY raw JSON, no markdown:\n\n${schema}\n\n${rules}\n${photoRule}` },
+        ]
+      : [{ text:prompt }];
 
-  // An uploaded video must finish processing on Google's side before it can be read.
-  if (video && !(await waitForVideo(video.name))) {
-    await deleteVideo(video.name);
-    return Response.json({ ok:false, error:"Couldn't process that video — try recording it again" }, { status:422 });
-  }
+    // An uploaded video must finish processing on Google's side before it can be read.
+    if (video && !(await waitForVideo(video.name))) {
+      await deleteVideo(video.name);
+      return { fail: Response.json({ ok:false, error:"Couldn't process that video — try recording it again" }, { status:422 }) };
+    }
 
-  let { ok, data, text, quotaExceeded } = await callGemini(
-    isDeep ? "gemini-pro-latest" : "gemini-flash-latest",
-    parts,
-    isDeep ? 12000 : video ? 8000 : 6000,
-    isDeep ? 2048 : 1024
-  );
-  // The pro model requires a billed account (0 free-tier quota) — fall back to flash rather
-  // than hard-failing "AI Refresh" for keys without billing enabled.
-  if (!ok && isDeep && quotaExceeded) {
-    ({ ok, data, text } = await callGemini("gemini-flash-latest", parts, 6000, 1024));
-  }
-  // The video has been read — don't leave a copy of it in Google's file store.
-  if (video) await deleteVideo(video.name);
+    let { ok, data, text, quotaExceeded } = await callGemini(
+      isDeep ? "gemini-pro-latest" : "gemini-flash-latest",
+      parts,
+      isDeep ? 12000 : video ? 8000 : 6000,
+      isDeep ? 2048 : 1024
+    );
+    // The pro model requires a billed account (0 free-tier quota) — fall back to flash rather
+    // than hard-failing "AI Refresh" for keys without billing enabled.
+    if (!ok && isDeep && quotaExceeded) {
+      ({ ok, data, text } = await callGemini("gemini-flash-latest", parts, 6000, 1024));
+    }
+    // The video has been read — don't leave a copy of it in Google's file store.
+    if (video) await deleteVideo(video.name);
 
-  if(!ok) {
-    console.error("Gemini API error:", JSON.stringify(data));
-    return Response.json({ ok:false, error: data.error?.message || "API error", partial }, { status:500 });
-  }
-  // No text came back (e.g. only a non-text block, or hit max token limit before any output)
-  if(!text.trim()){
-    console.error("Gemini returned no text. finishReason:", data.candidates?.[0]?.finishReason, "content:", JSON.stringify(data.candidates));
-    const suffix = (robust && apifyReason) ? ` [${apifyReason}]` : "";
-    const msg = isSocial
-      ? SOCIAL_NO_CAPTION + suffix
-      : `No recipe text returned (${data.stop_reason||"empty"})`;
-    return Response.json({ ok:false, error: msg, apifyReason, partial }, { status:422 });
-  }
+    if(!ok) {
+      console.error("Gemini API error:", JSON.stringify(data));
+      return { fail: Response.json({ ok:false, error: data.error?.message || "API error", partial }, { status:500 }) };
+    }
+    // No text came back (e.g. only a non-text block, or hit max token limit before any output)
+    if(!text.trim()){
+      console.error("Gemini returned no text. finishReason:", data.candidates?.[0]?.finishReason, "content:", JSON.stringify(data.candidates));
+      const suffix = (robust && apifyReason) ? ` [${apifyReason}]` : "";
+      const msg = isSocial
+        ? SOCIAL_NO_CAPTION + suffix
+        : `No recipe text returned (${data.stop_reason||"empty"})`;
+      return { fail: Response.json({ ok:false, error: msg, apifyReason, partial }, { status:422 }) };
+    }
 
-  try {
-    const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
+    let parsed;
+    try { parsed = JSON.parse(text.replace(/```json|```/g,"").trim()); }
+    catch {
+      // A truncated response is the usual cause here — log the finish reason so a recurrence is
+      // diagnosable from the Vercel logs without needing to reproduce it locally.
+      console.error("Parse failed. finishReason:", data.candidates?.[0]?.finishReason, "usage:", JSON.stringify(data.usageMetadata));
+      return { fail: Response.json({ ok:false, error:"Parse failed", partial }, { status:422 }) };
+    }
     // The model reported there was no actual recipe in the content (rather than inventing one
     // to fill the schema), or came back empty. Both mean: nothing real to save.
     const hasContent = parsed && !parsed.error && (parsed.title || (parsed.ingredients||[]).length || (parsed.steps||[]).length);
@@ -419,9 +490,35 @@ Re-read the content below carefully and capture anything the first pass missed �
       const msg = isSocial
         ? SOCIAL_NO_CAPTION + suffix
         : "Couldn't find a recipe in that — try a different link or manual entry.";
-      return Response.json({ ok:false, error: msg, apifyReason, partial }, { status:422 });
+      return { fail: Response.json({ ok:false, error: msg, apifyReason, partial }, { status:422 }) };
     }
+    return { parsed, data };
+  }
 
+  // Caption first for a reel: reading the caption alone takes a few seconds; downloading and
+  // watching the video takes far longer and costs more. If the caption already gives a method
+  // (2+ steps), use it. If not — ingredients only, "method in the video", a one-liner, or no
+  // caption at all — watch the video together with the caption. AI Refresh (deep) goes straight
+  // to the video: it's an explicit request to dig deeper.
+  let result = null;
+  if (pendingVideoUrl && pageText.trim() && !isDeep) {
+    result = await readRecipe();
+    if ((result.parsed?.steps || []).length >= 2) pendingVideoUrl = "";
+  }
+  if (pendingVideoUrl) {
+    const v = await fetchVideoToGemini(pendingVideoUrl);
+    if (v) {
+      video = v; linkVideo = true; hasMedia = true;
+      const withVideo = await readRecipe();
+      // Keep the caption-only result if the video read failed outright
+      if (!withVideo.fail || !result) result = withVideo;
+    }
+  }
+  if (!result) result = await readRecipe();
+  if (result.fail) return result.fail;
+  const { parsed, data } = result;
+
+  try {
     // Media imports: where the dish is in what was uploaded — a moment in the video, or a region
     // of a screenshot — so the client can cut out just the food for the recipe picture. Sanity-
     // check it: a malformed or tiny box (a profile picture, an icon) is worse than none.
@@ -522,11 +619,14 @@ Re-read the content below carefully and capture anything the first pass missed �
         finalUrl = u.toString();
       } catch {}
     }
-    return Response.json({ ok:true, recipe:parsed, ogImage:finalImage, photo, photoBox, finalUrl });
-  } catch {
-    // A truncated response is the usual cause here — log the finish reason so a recurrence is
-    // diagnosable from the Vercel logs without needing to reproduce it locally.
-    console.error("Parse failed. finishReason:", data.candidates?.[0]?.finishReason, "usage:", JSON.stringify(data.usageMetadata));
+    // scraperImage: the picture is already the scraper's full-size post image, so the client can
+    // skip its follow-up photo-upgrade scrape (one Apify call per import instead of two).
+    return Response.json({ ok:true, recipe:parsed, ogImage:finalImage, photo, photoBox, finalUrl,
+      scraperImage: scraperImage && finalImage === ogImage, watchedVideo: linkVideo });
+  } catch (e) {
+    // Something unexpected while finishing up (photo choice, stock lookup) — the JSON itself was
+    // already parsed and checked in readRecipe.
+    console.error("Parse post-processing failed:", e?.message, "finishReason:", data.candidates?.[0]?.finishReason);
     return Response.json({ ok:false, error:"Parse failed", partial }, { status:422 });
   }
 }

@@ -5,10 +5,18 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.85";
+const APP_VERSION = "2.86";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.86", title:"Instagram reels: the method from the video, automatically", major:true, items:[
+    "Just paste a reel's link — if the caption doesn't include the method, the AI watches the video too, so steps that are only spoken or shown on screen come through",
+    "Reels whose caption already has the full recipe still import in a few seconds — the video is only watched when it's needed",
+    "AI Refresh on an Instagram recipe watches the video too, filling in method steps the first import missed",
+    "Fixed the caption sometimes being replaced by junk from Instagram's login page",
+    "Instagram imports now use one scraper request instead of two, and don't retry posts that Instagram has restricted",
+    "Posts Instagram blocks entirely still need a screenshot or screen recording under Photo",
+  ]},
   { v:"2.85", title:"Shared links import properly", items:[
     "Links shared from apps like Google, which paste a title in front of the link, now open the recipe page instead of failing with 'couldn't find a recipe'",
     "Sharing a recipe into Fork n Pantry from another app works the same way",
@@ -248,7 +256,7 @@ const CHANGELOG = [
 const LATEST_NOTABLE = (CHANGELOG.find(c=>c.major)||CHANGELOG[0]).v;
 // [PRO] Features showcased in What's New — flagged for a future Pro tier
 const PRO_FEATURES = [
-  { icon:"🔍", name:"AI Refresh", desc:"Recipe imported with missing steps or ingredients? Tap AI Refresh in the editor and it re-reads the original page for anything the quick import missed. If the recipe came in wrong, or the method is only in the video, use Replace from screenshot / video instead." },
+  { icon:"🔍", name:"AI Refresh", desc:"Recipe imported with missing steps or ingredients? Tap AI Refresh in the editor and it re-reads the original page — and for an Instagram reel, watches the video — for anything the first import missed. If a recipe came in wrong, use Replace from screenshot / video." },
   { icon:"🌐", name:"Shared Cookbooks", desc:"Invite family or friends to a cookbook and build it together. Everyone's additions sync live, you can see who's joined, and recipes flow both ways — perfect for planning meals as a household." },
   { icon:"✓", name:"Cook History & Rating", desc:"Tap 'Made it ★' after cooking to log it and give a star rating. See when you last cooked a recipe, your average rating, and sort your whole collection by what you love most." },
   { icon:"🏠", name:"Pantry Tracker", desc:"Mark the ingredients you always have at home. The grocery list automatically hides pantry staples so your shopping list only shows what you actually need to buy." },
@@ -1227,7 +1235,9 @@ function EditModal({recipe,onSave,onClose}){
       const oldIngCount=form.ingredientsText.split("\n").filter(l=>l.trim()).length;
       const oldStepCount=form.stepsText.split("\n").filter(l=>l.trim()).length;
       const res=await fetch("/api/parse",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({input:url,mode:"deep",existing:{title:form.title,ingredientCount:oldIngCount,stepCount:oldStepCount}})});
+        // robust for Instagram/TikTok: fetch the post through the scraper so the AI can also watch
+        // the reel's video — where a method the first import missed usually is
+        body:JSON.stringify({input:url,mode:"deep",robust:/instagram\.com|tiktok\.com/i.test(url),existing:{title:form.title,ingredientCount:oldIngCount,stepCount:oldStepCount}})});
       const data=await res.json();
       if(!data.ok)throw new Error(data.error||"Parse failed");
       const r=data.recipe;
@@ -1765,27 +1775,30 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
         setLoadMsg(media.video?"Watching the video…":"");
         data=await parseMedia(media);
       }else{
-        // Phase 1 — quick methods (fast: oEmbed / page HTML / Microlink)
-        data=await callParse(link||text,false);
-        linkPartial=data.partial||linkPartial;
-        // Phase 2 — if a social link failed the quick way, escalate to the robust scraper.
-        // It's slower (cold start), so warn the user why the wait is longer.
-        const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(link);
-        if(!data.ok && isSocial && isLink){
-          // Only surface the "taking longer" notice if the retry is actually slow —
-          // most retries finish in a few seconds and shouldn't alarm the user.
-          const slowTimer=setTimeout(()=>setLoadMsg("Fetching the full post from Instagram — hang tight…"),4000);
+        // Instagram/TikTok go straight to the scraper: the quick methods can at best get the
+        // caption, and for a reel the method is often only in the video — which only the
+        // scraper's result gives us (the server then has the AI watch it). The server still falls
+        // back to the quick methods itself if the scraper fails.
+        const scrapeable=/instagram\.com|tiktok\.com/i.test(link);
+        if(scrapeable){
+          // Only surface the notice if it's actually slow — some imports finish quickly
+          const slowTimer=setTimeout(()=>setLoadMsg("Fetching the post and watching the video — this can take a minute…"),4000);
           try{
-            // The first Apify call after idle cold-starts the scraper and often times out; that
-            // call warms it, so a retry moments later succeeds. Auto-retry a few times so the
-            // user doesn't see a failure that would fix itself.
-            for(let attempt=0; attempt<3 && !data.ok; attempt++){
-              if(attempt>0){ setLoadMsg("Still fetching that post — almost there…"); await new Promise(r=>setTimeout(r,2500)); }
+            for(let attempt=0; attempt<3; attempt++){
+              if(attempt>0){ setLoadMsg("The scraper was waking up — trying again…"); await new Promise(r=>setTimeout(r,2500)); }
               data=await callParse(link,true);
               linkPartial=data.partial||linkPartial;
+              // The first scraper call after idle often times out while it cold-starts, and that
+              // warms it — so retry that. Not a definite answer ("restricted", out of credit):
+              // repeating those just makes more requests to Instagram for nothing.
+              if(data.ok||!/exception|timeout|abort|apify-5\d\d|apify-408/i.test(data.apifyReason||""))break;
             }
           }
           finally{ clearTimeout(slowTimer); }
+        }else{
+          // Recipe sites (and Facebook, which has no scraper): page HTML / structured data / Microlink
+          data=await callParse(link||text,false);
+          linkPartial=data.partial||linkPartial;
         }
       }
       if(!data.ok)throw new Error(data.error||"Couldn't parse — try manual entry.");
@@ -1814,9 +1827,9 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
         title:r.title||(!srcSocial&&partial?.title)||"",
         source:r.source||srcName,
         ogImage,url:isLink?(data.finalUrl||link):sourceUrl,savedAt:Date.now(),
-        // A picture taken from the user's own media: don't let the automatic social photo
-        // upgrade replace it with the post's thumbnail.
-        ...(fromMedia?{imgEnriched:true}:{})});
+        // A picture taken from the user's own media, or already the scraper's full-size post
+        // image: skip the automatic social photo upgrade (a second scrape for nothing).
+        ...(fromMedia||data.scraperImage?{imgEnriched:true}:{})});
       onClose();
     }catch(e){
       const m=e.message||"Couldn't parse — try manual entry.";

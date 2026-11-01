@@ -5,10 +5,15 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.87";
+const APP_VERSION = "2.88";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.88", title:"Finds the full recipe on the web", major:true, items:[
+    "When a Facebook or Instagram link doesn't include the method (or can't be read at all), the app searches the web for where the creator wrote the recipe out — their YouTube description, website or recipe sites",
+    "Only used when it's actually found in search results — it never makes a recipe up from the title",
+    "Recipes found this way say so in their notes, with the sites they came from, so you can check them against the video"
+  ]},
   { v:"2.87", title:"Ask about this recipe", major:true, items:[
     "Every recipe now has a 💬 Ask box — e.g. \"I don't have bay leaves, what can I use?\", \"Can I freeze this?\", \"What goes with it?\"",
     "Answers know the recipe, including the serving size you've scaled it to, and you can ask follow-ups",

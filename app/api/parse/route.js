@@ -106,6 +106,68 @@ async function callGemini(model, parts, maxTokens, thinkingBudget = 512) {
   return { ok: res.ok && !data.error, quotaExceeded: data.error?.status === "RESOURCE_EXHAUSTED", data, text };
 }
 
+// Last resort for a social post we couldn't fully read (Facebook has no scraper, some Instagram
+// posts are blocked, some keep the method only in the video): have Gemini search Google for where
+// the creator published the recipe in writing — their site, YouTube description, recipe sites.
+// Google does the searching; nothing here contacts the social platform. (Handing Gemini the post
+// link itself doesn't work through the API — Facebook refuses Google's link reader.)
+// Accepted only when the answer is backed by actual search results; with no sources it's treated
+// as not found, so a recipe can never be invented from a title.
+async function searchWebForRecipe(clue, url, deadline) {
+  const platform = /facebook\.com|fb\.watch/i.test(url) ? "Facebook" : /tiktok\.com/i.test(url) ? "TikTok" : "Instagram";
+  // (The post link itself is left out of the prompt: with it, the model more often answered
+  // NOT_FOUND without searching at all.)
+  const prompt = `Someone wants to save the recipe from a ${platform} post.
+
+What we know about the post:
+${clue}
+
+Use Google Search to find this recipe's full written method. It is often written out somewhere other than the post: the description of the same video on YouTube (Shorts), the creator's website or blog, or recipe sites that reproduce their posts. Search for the recipe name together with the creator's name.
+
+Then write out the recipe in plain text: title, creator, servings, the full ingredient list with amounts, the method steps with temperatures and times, and any storage, freezing or reheating notes — as published, adding nothing.
+
+If no search result has this specific recipe's method, reply with only NOT_FOUND. Never guess, fill gaps from general knowledge, or substitute a similar recipe from someone else.`;
+  // The model sometimes replies without running a search at all (no queries, no results) — a
+  // quick, empty answer, so it's asked again, up to 3 times. A reply that did search but found
+  // nothing is final.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    // A search with plenty of thinking can take a minute; stay inside the import's time limit.
+    const timeLeft = deadline - Date.now();
+    if (timeLeft < 25000) { console.log("web search: out of time"); return null; }
+    try {
+      const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          tools: [{ google_search: {} }],
+          // More thinking room made it search far more reliably in testing. Still non-zero and
+          // well below the output cap (see callGemini).
+          generationConfig: { maxOutputTokens: 9000, thinkingConfig: { thinkingBudget: 4096 } },
+        }),
+        signal: AbortSignal.timeout(Math.min(90000, timeLeft)),
+      });
+      const data = await res.json();
+      const c = data.candidates?.[0];
+      const text = (c?.content?.parts || []).filter(p => p.text && !p.thought).map(p => p.text).join("").trim();
+      const chunks = c?.groundingMetadata?.groundingChunks || [];
+      const searched = (c?.groundingMetadata?.webSearchQueries || []).length > 0 || chunks.length > 0;
+      if (!res.ok || data.error) { console.error("web search: Gemini", res.status, data.error?.status); return null; }
+      if (!searched) { console.log(`web search: didn't search (attempt ${attempt})`); continue; }
+      // No results attached means nothing backs the answer — never accept that as a recipe.
+      if (!chunks.length || !text || /NOT_FOUND/.test(text)) { console.log("web search: not found"); return null; }
+      // Source site names (the links themselves are short-lived Google redirects, so not kept)
+      const sources = [...new Set(chunks.map(g => g.web?.title).filter(Boolean))].slice(0, 4);
+      console.log("web search: found", sources.join(", "));
+      return { text: text.slice(0, 8000), sources };
+    } catch (e) {
+      console.error("web search:", e?.message);
+      return null;
+    }
+  }
+  return null;
+}
+
 // Download a reel's video (the scraper's direct link) and put it in Gemini's file store, so a
 // pasted link alone gets the method that's only in the video. Server-to-Google, so the request-size
 // limit that forces browser uploads to go direct doesn't apply. Returns the file ref, or null —
@@ -198,6 +260,7 @@ async function fetchHtml(url, timeout = 7000, meta = null) {
 }
 
 export async function POST(req) {
+  const startedAt = Date.now();
   const body = await req.json();
   const { input: rawInput = "", imageBase64 = "", imageMediaType = "image/jpeg", mode = "", existing = null, robust = false } = body;
   // Share sheets paste "Recipe title https://link". If the input is essentially a link with a short
@@ -243,7 +306,7 @@ export async function POST(req) {
 
   const isUrl = input.trim().startsWith("http");
   const isSocial = /(instagram\.com|tiktok\.com|facebook\.com|fb\.watch)/i.test(input);
-  let pageText = "", ogImage = "", ogTitle = "", caption = "", apifyReason = "";
+  let pageText = "", ogImage = "", ogTitle = "", caption = "", apifyReason = "", creatorName = "";
   const pageMeta = {}; // finalUrl of the link after redirects, if it resolved somewhere else
 
   // ── oEmbed for Instagram / TikTok — gets caption text without auth ────────────
@@ -259,6 +322,7 @@ export async function POST(req) {
           if (ap.caption) { caption = ap.caption; pageText = caption; }
           if (ap.image && !ogImage) { ogImage = ap.image; scraperImage = true; }
           if (ap.title && !ogTitle) ogTitle = ap.title;
+          if (ap.title) creatorName = ap.title; // the scraper's "title" is the account's name
           // A reel: its video may be the only place the method is. Not fetched yet — the caption is
           // read first, and the video only watched if that finds no method (see readRecipe below).
           // Very long videos are skipped (slow and costly to process; caption only).
@@ -351,6 +415,36 @@ export async function POST(req) {
   // supplied, so read it (the accuracy rules still apply: a bare title won't become a recipe).
   if (isUrl && !pageText.trim() && shareLabel.length > 40) pageText = shareLabel;
 
+  // Web search fallback for social links (see searchWebForRecipe). Not for the user's own
+  // screenshots/recordings — those are the content.
+  const canSearchWeb = isUrl && isSocial && !hasMedia;
+  let searchedWeb = false, webSources = null;
+  const junkTitle = /^(facebook|instagram|tiktok|log ?in|sign ?up|watch)\b/i;
+  // Keep the clue short and specific — recipe name and creator. Pasting the whole caption in
+  // made the search unreliable in testing (it often skipped searching or gave up).
+  const webClue = (recipeName = "") => [
+    recipeName ? `Recipe name: ${recipeName.slice(0, 150)}` : "",
+    creatorName ? `Creator: ${creatorName.slice(0, 100)}` : "",
+    ogTitle && ogTitle !== creatorName && !junkTitle.test(ogTitle.trim()) ? `Post title: ${ogTitle.slice(0, 200)}` : "",
+    pageText.trim() ? `Start of the caption: ${pageText.trim().slice(0, 250)}` : "",
+    shareLabel && shareLabel !== pageText ? `Shared as: ${shareLabel.slice(0, 200)}` : "",
+  ].filter(Boolean).join("\n");
+  // Searches and, if the recipe is found, makes it the content to read (alongside any caption).
+  async function useWebSearch(recipeName) {
+    searchedWeb = true;
+    const clue = webClue(recipeName);
+    if (!clue) return false;
+    const found = await searchWebForRecipe(clue, input, startedAt + 255000);
+    if (!found) return false;
+    pageText = (pageText.trim() ? `Post caption:\n${pageText}\n\n` : "")
+      + `The same recipe written out, found by web search:\n${found.text}`;
+    webSources = found.sources;
+    return true;
+  }
+
+  // Nothing readable came from the link itself — before giving up, look for it on the web.
+  if (canSearchWeb && !pageText.trim() && !video && !pendingVideoUrl) await useWebSearch();
+
   // Nothing was actually retrieved from the link. Handing the model a bare URL and asking it to
   // "extract recipe details" is what makes it invent a plausible recipe out of thin air — it has
   // nothing to read, but it has been given a schema to fill. Fail honestly instead of guessing.
@@ -397,7 +491,8 @@ export async function POST(req) {
 - source: site/platform name
 - imageSearch: 2-3 English words describing the dish for a food photo search e.g. "spaghetti carbonara pasta", "chocolate lava cake", "green thai curry"`;
 
-  const context = hasMedia
+  // Built per read: the content can change between reads (a web-search result added).
+  const contextNow = () => hasMedia
     ? null
     : isUrl && pageText
       ? `URL: ${input}${ogTitle?`\nTitle: ${ogTitle}`:""}\n\nPage content:\n${pageText}`
@@ -410,9 +505,9 @@ export async function POST(req) {
 
 Re-read the content below carefully and capture anything the first pass missed — ingredients or steps that were stated but not picked up. Only include what the content actually says; if it genuinely doesn't list more than was already found, return what IS there rather than filling the gaps with invented detail.\n\n` : "";
 
-  const prompt = isDeep
-    ? `${deepPrefix}Extract the recipe from this content as completely as the content allows. Read it thoroughly, but never add anything it doesn't state. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`
-    : `Extract recipe details from this content. Return ONLY raw JSON, no markdown:\n\n${context}\n\n${schema}\n\n${rules}`;
+  const promptNow = () => isDeep
+    ? `${deepPrefix}Extract the recipe from this content as completely as the content allows. Read it thoroughly, but never add anything it doesn't state. Return ONLY raw JSON, no markdown:\n\n${contextNow()}\n\n${schema}\n\n${rules}`
+    : `Extract recipe details from this content. Return ONLY raw JSON, no markdown:\n\n${contextNow()}\n\n${schema}\n\n${rules}`;
 
   // One read of the content, built from the current state (with or without a video): call the
   // model and parse its JSON. Returns { parsed, data } or { fail: <Response> }. A reel can be read
@@ -438,7 +533,7 @@ Re-read the content below carefully and capture anything the first pass missed �
           ...(postText ? [{ text:`Post caption:\n${postText}` }] : []),
           { text:`${mediaIntro} Return ONLY raw JSON, no markdown:\n\n${schema}\n\n${rules}\n${photoRule}` },
         ]
-      : [{ text:prompt }];
+      : [{ text:promptNow() }];
 
     // An uploaded video must finish processing on Google's side before it can be read.
     if (video && !(await waitForVideo(video.name))) {
@@ -515,8 +610,27 @@ Re-read the content below carefully and capture anything the first pass missed �
     }
   }
   if (!result) result = await readRecipe();
+
+  // Still no method (or nothing at all): look for the creator's written recipe on the web — unless
+  // that was already tried, or the import has used most of its time (a slow video read).
+  const stepsFound = result.fail ? 0 : (result.parsed?.steps || []).length;
+  if (canSearchWeb && !searchedWeb && stepsFound < 2 && Date.now() - startedAt < 200000) {
+    const captionOnly = pageText;
+    if (await useWebSearch(result.parsed?.title || "")) {
+      // Read as text: any reel video has already been read and deleted.
+      video = null; linkVideo = false; hasMedia = false;
+      const viaWeb = await readRecipe();
+      if (!viaWeb.fail && (viaWeb.parsed.steps || []).length > stepsFound) result = viaWeb;
+      else { webSources = null; pageText = captionOnly; }
+    }
+  }
   if (result.fail) return result.fail;
   const { parsed, data } = result;
+  // Say where it came from, so it gets checked against the post
+  if (webSources) {
+    parsed.notes = [parsed.notes, `🔎 Found by web search, not read from the post itself — worth checking against the video.${webSources.length ? ` Sources: ${webSources.join(", ")}` : ""}`]
+      .filter(Boolean).join("\n\n");
+  }
 
   try {
     // Media imports: where the dish is in what was uploaded — a moment in the video, or a region
@@ -622,7 +736,7 @@ Re-read the content below carefully and capture anything the first pass missed �
     // scraperImage: the picture is already the scraper's full-size post image, so the client can
     // skip its follow-up photo-upgrade scrape (one Apify call per import instead of two).
     return Response.json({ ok:true, recipe:parsed, ogImage:finalImage, photo, photoBox, finalUrl,
-      scraperImage: scraperImage && finalImage === ogImage, watchedVideo: linkVideo });
+      scraperImage: scraperImage && finalImage === ogImage, watchedVideo: linkVideo, foundOnWeb: !!webSources });
   } catch (e) {
     // Something unexpected while finishing up (photo choice, stock lookup) — the JSON itself was
     // already parsed and checked in readRecipe.

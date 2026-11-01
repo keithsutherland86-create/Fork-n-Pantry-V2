@@ -5,10 +5,15 @@ import { getSupabase } from "../lib/supabase";
 
 // ─── Version & release notes ────────────────────────────────────────────────
 // Bump APP_VERSION +0.01 each push and add a CHANGELOG entry for notable changes.
-const APP_VERSION = "2.84";
+const APP_VERSION = "2.85";
 // Mark an entry `major:true` for a significant release — only those auto-pop the What's New
 // screen on open. Minor +0.01 pushes (major omitted) update the list silently.
 const CHANGELOG = [
+  { v:"2.85", title:"Shared links import properly", items:[
+    "Links shared from apps like Google, which paste a title in front of the link, now open the recipe page instead of failing with 'couldn't find a recipe'",
+    "Sharing a recipe into Fork n Pantry from another app works the same way",
+    "Short links (like share.google) are saved as the real recipe page, so 'View original recipe' goes straight there",
+  ]},
   { v:"2.84", title:"Import recipes from the video itself", major:true, items:[
     "Screen-record a reel and add it under 📷 Photo — the AI watches and listens, so steps that are only spoken or shown on screen are captured",
     "Pick the recording and a screenshot of the caption together, and it combines both: ingredients from the caption, method from the video",
@@ -538,6 +543,16 @@ async function prepareMedia(files,onProgress){
   const preview=images[0]?.dataUrl||(videoFile?await videoFrame(videoFile,0.5,300):"");
   const video=videoFile?await uploadVideo(videoFile,onProgress):null;
   return{images,video,videoFile,preview};
+}
+
+// Share sheets often paste "Recipe title https://link" rather than a bare link. If the paste is
+// essentially a link with a short label, it's that link; a long paste (a whole caption that
+// happens to contain a URL) stays text. Returns the link, or "".
+function shareLink(text){
+  const t=(text||"").trim();
+  const m=t.match(/https?:\/\/[^\s<>"']+/);
+  if(!m)return "";
+  return t.replace(m[0],"").trim().length<=200?m[0].replace(/[.,);!?]+$/,""):"";
 }
 
 function parseMedia(media,extra={}){
@@ -1717,9 +1732,10 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
   useEffect(()=>{ if(prefill)parseAndSave({text:prefill}); },[]);
 
   function checkDuplicate(text){
-    if(!text.trim().startsWith("http"))return null;
+    const link=shareLink(text);
+    if(!link)return null;
     const norm=u=>u.replace(/\/$/,"").toLowerCase();
-    return recipes.find(r=>r.url&&norm(r.url)===norm(text.trim()))||null;
+    return recipes.find(r=>r.url&&norm(r.url)===norm(link))||null;
   }
 
   function callParse(text,robust){
@@ -1731,13 +1747,15 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
   // standing in for a link that failed to import — the saved recipe keeps that link, plus anything
   // the link itself gave up.
   async function parseAndSave({text="",files=null,force=false,sourceUrl="",partial=null}){
-    if(!force&&text.trim().startsWith("http")){
+    // A pasted link — even with a title in front of it, as share sheets add
+    const link=files?.length?"":shareLink(text);
+    if(!force&&link){
       const dup=checkDuplicate(text);
       if(dup){setDupWarning(dup);return;}
     }
     setDupWarning(null);
     setLoading(true);setError("");setLoadMsg("");
-    const isLink=text.trim().startsWith("http");
+    const isLink=!!link;
     let linkPartial=null; // whatever the failed link returned, for the screenshot fallback
     try{
       let data,media=null;
@@ -1748,11 +1766,11 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
         data=await parseMedia(media);
       }else{
         // Phase 1 — quick methods (fast: oEmbed / page HTML / Microlink)
-        data=await callParse(text,false);
+        data=await callParse(link||text,false);
         linkPartial=data.partial||linkPartial;
         // Phase 2 — if a social link failed the quick way, escalate to the robust scraper.
         // It's slower (cold start), so warn the user why the wait is longer.
-        const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(text);
+        const isSocial=/instagram\.com|tiktok\.com|facebook\.com|fb\.watch/i.test(link);
         if(!data.ok && isSocial && isLink){
           // Only surface the "taking longer" notice if the retry is actually slow —
           // most retries finish in a few seconds and shouldn't alarm the user.
@@ -1763,7 +1781,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
             // user doesn't see a failure that would fix itself.
             for(let attempt=0; attempt<3 && !data.ok; attempt++){
               if(attempt>0){ setLoadMsg("Still fetching that post — almost there…"); await new Promise(r=>setTimeout(r,2500)); }
-              data=await callParse(text,true);
+              data=await callParse(link,true);
               linkPartial=data.partial||linkPartial;
             }
           }
@@ -1795,7 +1813,7 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       onAdd({id:Date.now().toString(),...r,
         title:r.title||(!srcSocial&&partial?.title)||"",
         source:r.source||srcName,
-        ogImage,url:isLink?text.trim():sourceUrl,savedAt:Date.now(),
+        ogImage,url:isLink?(data.finalUrl||link):sourceUrl,savedAt:Date.now(),
         // A picture taken from the user's own media: don't let the automatic social photo
         // upgrade replace it with the post's thumbnail.
         ...(fromMedia?{imgEnriched:true}:{})});
@@ -1804,9 +1822,9 @@ function AddSheet({onAdd,onClose,prefill="",recipes=[],onFail}){
       const m=e.message||"Couldn't parse — try manual entry.";
       setError(m);
       if(isLink){
-        logImportIssue(text.trim(),m);
+        logImportIssue(link,m);
         // Remember the link so the screenshot / manual fallback is saved against it
-        setFailedLink({url:text.trim(),partial:linkPartial});
+        setFailedLink({url:link,partial:linkPartial});
       }
       if(onFail)onFail();
     }
@@ -3436,7 +3454,7 @@ function ScanTab({recipes=[],onOpenRecipe}){
                 {matches.map(r=>(
                   <button key={r.id} onClick={()=>onOpenRecipe&&onOpenRecipe(r)}
                     style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"11px 12px",marginBottom:8,background:"var(--cream)",border:"1px solid var(--sage-lt)",borderRadius:"var(--r-md)",cursor:"pointer",textAlign:"left"}}>
-                    {r.ogImage&&<img src={r.ogImage.startsWith("http")?`/api/img?url=${encodeURIComponent(r.ogImage)}`:r.ogImage} style={{width:44,height:44,borderRadius:10,objectFit:"cover",flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
+                    {r.ogImage&&<img src={pImg(r.ogImage)} style={{width:44,height:44,borderRadius:10,objectFit:"cover",flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontWeight:600,fontSize:14,color:"var(--ink)",marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.title}</div>
                       <div style={{fontSize:12,color:"var(--moss)",fontWeight:600}}>{r._hits} ingredient{r._hits!==1?"s":""} matched</div>

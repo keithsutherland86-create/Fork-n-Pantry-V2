@@ -20,7 +20,8 @@ function extractFromHtml(html, fallbackTitle = "") {
   ];
   for (const p of imgPatterns) {
     const m = html.match(p);
-    if (m?.[1]?.startsWith("http")) { ogImage = m[1].replace(/&amp;/g,"&").replace(/&#38;/g,"&"); break; }
+    // (\/ un-escaping: URLs lifted out of JSON embedded in the page arrive as https:\/\/…)
+    if (m?.[1]?.startsWith("http")) { ogImage = m[1].replace(/&amp;/g,"&").replace(/&#38;/g,"&").replace(/\\\//g,"/"); break; }
   }
   const t = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
   if (t) ogTitle = t[1];
@@ -133,7 +134,9 @@ async function deleteVideo(name) {
   } catch {}
 }
 
-async function fetchHtml(url, timeout = 7000) {
+// meta (optional): receives finalUrl — where the request ended up after any redirects (a
+// share.google or other short link resolves to the actual recipe page).
+async function fetchHtml(url, timeout = 7000, meta = null) {
   const agents = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1",
     "Mozilla/5.0 (compatible; Googlebot/2.1)",
@@ -142,7 +145,7 @@ async function fetchHtml(url, timeout = 7000) {
   for (const ua of agents) {
     try {
       const r = await fetch(url, { headers: { "User-Agent": ua, "Accept": "text/html,*/*" }, redirect: "follow", signal: AbortSignal.timeout(timeout) });
-      if (r.ok) return await r.text();
+      if (r.ok) { if (meta) meta.finalUrl = r.url; return await r.text(); }
     } catch {}
   }
   return "";
@@ -150,7 +153,15 @@ async function fetchHtml(url, timeout = 7000) {
 
 export async function POST(req) {
   const body = await req.json();
-  const { input = "", imageBase64 = "", imageMediaType = "image/jpeg", mode = "", existing = null, robust = false } = body;
+  const { input: rawInput = "", imageBase64 = "", imageMediaType = "image/jpeg", mode = "", existing = null, robust = false } = body;
+  // Share sheets paste "Recipe title https://link". If the input is essentially a link with a short
+  // label, use the link — otherwise it's treated as plain text and the page is never opened.
+  const rawText = String(rawInput).trim();
+  const linkMatch = rawText.match(/https?:\/\/[^\s<>"']+/);
+  const useLink = !!linkMatch && rawText.replace(linkMatch[0], "").trim().length <= 200;
+  const input = useLink ? linkMatch[0].replace(/[.,);!?]+$/, "") : rawText;
+  // Whatever the user pasted around the link — read as a last resort if the link gives nothing
+  const shareLabel = useLink ? rawText.replace(linkMatch[0], "").trim() : "";
   // Media imports: up to a few screenshots, and/or one video already uploaded to Gemini's file
   // store by the browser (see /api/video-session). `imageBase64` is the older single-image form.
   const images = [
@@ -184,6 +195,7 @@ export async function POST(req) {
   const isUrl = input.trim().startsWith("http");
   const isSocial = /(instagram\.com|tiktok\.com|facebook\.com|fb\.watch)/i.test(input);
   let pageText = "", ogImage = "", ogTitle = "", caption = "", apifyReason = "";
+  const pageMeta = {}; // finalUrl of the link after redirects, if it resolved somewhere else
 
   // ── oEmbed for Instagram / TikTok — gets caption text without auth ────────────
   if (isUrl) {
@@ -224,7 +236,7 @@ export async function POST(req) {
 
   if (isUrl) {
     // ── Step 1: Direct fetch for page content (needed for Claude to parse the recipe) ──
-    const html = await fetchHtml(input, 6000);
+    const html = await fetchHtml(input, 6000, pageMeta);
     if (html) {
       const ex = extractFromHtml(html, ogTitle);
       if (ex.ogImage) ogImage = ex.ogImage;
@@ -279,6 +291,10 @@ export async function POST(req) {
   // Whatever the link DID give up (a title, a photo) even if the import goes on to fail. Sent
   // back with the failure so the client can keep it when the user falls back to a screenshot.
   const partial = isUrl ? { title: ogTitle || "", image: ogImage || "" } : null;
+
+  // The link gave nothing, but the user pasted some text with it — that's real content they
+  // supplied, so read it (the accuracy rules still apply: a bare title won't become a recipe).
+  if (isUrl && !pageText.trim() && shareLabel.length > 40) pageText = shareLabel;
 
   // Nothing was actually retrieved from the link. Handing the model a bare URL and asking it to
   // "extract recipe details" is what makes it invent a plausible recipe out of thin air — it has
@@ -494,7 +510,19 @@ Re-read the content below carefully and capture anything the first pass missed �
     // and cuts the picture out locally, rather than us echoing megabytes back down the wire.
     // (photoBox is the older single-screenshot form, kept for a client still on the old code.)
     const photoBox = photo?.source === "image" && photo.index === 0 ? photo.box : null;
-    return Response.json({ ok:true, recipe:parsed, ogImage:finalImage, photo, photoBox });
+    // A short/share link that resolved to the real recipe page: hand back the real address so
+    // that's what gets saved. Not for social links, whose redirects lead to login pages.
+    let finalUrl = isUrl && !isSocial && /^https?:\/\//.test(pageMeta.finalUrl || "") && pageMeta.finalUrl !== input
+      ? pageMeta.finalUrl : "";
+    // Drop per-visit tracking tokens (they differ every time, so they'd defeat duplicate detection)
+    if (finalUrl) {
+      try {
+        const u = new URL(finalUrl);
+        for (const k of [...u.searchParams.keys()]) if (/^(utm_|nk$|fbclid$|gclid$|mc_|_ga$)/i.test(k)) u.searchParams.delete(k);
+        finalUrl = u.toString();
+      } catch {}
+    }
+    return Response.json({ ok:true, recipe:parsed, ogImage:finalImage, photo, photoBox, finalUrl });
   } catch {
     // A truncated response is the usual cause here — log the finish reason so a recurrence is
     // diagnosable from the Vercel logs without needing to reproduce it locally.
